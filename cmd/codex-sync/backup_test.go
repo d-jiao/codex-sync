@@ -9,7 +9,7 @@ import (
 )
 
 // TestCreateBackupSetsRestrictivePermissions verifies that the backup directory
-// and the files copied into it are user-only readable/writable. ~/.claude can
+// and the files copied into it are user-only readable/writable. ~/.codex can
 // contain API keys, prompts, and personal context, so backups must not be
 // world-readable either.
 func TestCreateBackupSetsRestrictivePermissions(t *testing.T) {

@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -52,8 +53,8 @@ const (
 func main() {
 	rootCmd := &cobra.Command{
 		Use:     "codex-sync",
-		Short:   "Sync Claude Code sessions across devices",
-		Long:    `A CLI tool to sync your ~/.claude directory across devices using cloud storage with encryption.`,
+		Short:   "Sync Codex sessions across devices",
+		Long:    `A CLI tool to sync your Codex home (~/.codex, or $CODEX_HOME) across devices using cloud storage with encryption.`,
 		Version: version,
 	}
 
@@ -82,17 +83,17 @@ func printBanner() {
 	fmt.Printf("  %sWelcome to Codex Sync!%s %sv%s%s\n", colorBold, colorReset, colorDim, version, colorReset)
 	fmt.Println()
 
-	// Block-style ASCII art - CLAUDE SYNC on one line
+	// Block-style ASCII art - CODEX SYNC on one line
 	fmt.Printf("%s", colorCyan)
-	fmt.Println("  ██████╗██╗      █████╗ ██╗   ██╗██████╗ ███████╗  ███████╗██╗   ██╗███╗   ██╗ ██████╗")
-	fmt.Println("  ██╔════╝██║     ██╔══██╗██║   ██║██╔══██╗██╔════╝  ██╔════╝╚██╗ ██╔╝████╗  ██║██╔════╝")
-	fmt.Println("  ██║     ██║     ███████║██║   ██║██║  ██║█████╗    ███████╗ ╚████╔╝ ██╔██╗ ██║██║     ")
-	fmt.Println("  ██║     ██║     ██╔══██║██║   ██║██║  ██║██╔══╝    ╚════██║  ╚██╔╝  ██║╚██╗██║██║     ")
-	fmt.Println("  ╚██████╗███████╗██║  ██║╚██████╔╝██████╔╝███████╗  ███████║   ██║   ██║ ╚████║╚██████╗")
-	fmt.Println("   ╚═════╝╚══════╝╚═╝  ╚═╝ ╚═════╝ ╚═════╝ ╚══════╝  ╚══════╝   ╚═╝   ╚═╝  ╚═══╝ ╚═════╝")
+	fmt.Println("  ██████╗ ██████╗ ██████╗ ███████╗██╗  ██╗  ███████╗██╗   ██╗███╗   ██╗ ██████╗")
+	fmt.Println("  ██╔════╝██╔═══██╗██╔══██╗██╔════╝╚██╗██╔╝  ██╔════╝╚██╗ ██╔╝████╗  ██║██╔════╝")
+	fmt.Println("  ██║     ██║   ██║██║  ██║█████╗   ╚███╔╝   ███████╗ ╚████╔╝ ██╔██╗ ██║██║     ")
+	fmt.Println("  ██║     ██║   ██║██║  ██║██╔══╝   ██╔██╗   ╚════██║  ╚██╔╝  ██║╚██╗██║██║     ")
+	fmt.Println("  ╚██████╗╚██████╔╝██████╔╝███████╗██╔╝ ██╗  ███████║   ██║   ██║ ╚████║╚██████╗")
+	fmt.Println("   ╚═════╝ ╚═════╝ ╚═════╝ ╚══════╝╚═╝  ╚═╝  ╚══════╝   ╚═╝   ╚═╝  ╚═══╝ ╚═════╝")
 	fmt.Printf("%s\n", colorReset)
 
-	fmt.Printf("  %sSync your Claude Code sessions across all your devices.%s\n", colorDim, colorReset)
+	fmt.Printf("  %sSync your Codex sessions across all your devices.%s\n", colorDim, colorReset)
 	fmt.Printf("  %sIssues & PRs welcome: %shttps://github.com/d-jiao/codex-sync%s\n", colorDim, colorCyan, colorReset)
 	fmt.Println()
 }
@@ -170,7 +171,7 @@ Examples:
 
 	// Provider selection
 	cmd.Flags().StringVar(&provider, "provider", "", "Storage provider: r2, s3, gcs, s3-compatible, or webdav")
-	cmd.Flags().StringVar(&scope, "scope", "", "Sync scope: 'full' (default, everything) or 'sessions' (conversation history only)")
+	cmd.Flags().StringVar(&scope, "scope", "", "Sync scope: 'full' (default: sessions + config, rules, skills, memories) or 'sessions' (conversation data only)")
 	cmd.Flags().StringVar(&bucket, "bucket", "", "Bucket name")
 	cmd.Flags().BoolVar(&usePassphrase, "passphrase", false, "Derive encryption key from passphrase")
 	cmd.Flags().BoolVarP(&force, "force", "f", false, "Overwrite existing config/key without prompting")
@@ -252,15 +253,15 @@ func resolveScope(scope string) (string, error) {
 		prompt := &survey.Select{
 			Message: "What should be synced?",
 			Options: []string{
-				"Sessions only — conversation history (recommended for syncing across machines)",
-				"Everything — settings, plugins, skills, agents, and sessions",
+				"Everything — sessions, names, history, attachments, config.toml, rules, skills, memories (recommended)",
+				"Sessions only — conversations, names, history and attachments",
 			},
 		}
 		var c int
 		if err := survey.AskOne(prompt, &c); err != nil {
 			return "", err
 		}
-		if c == 0 {
+		if c == 1 {
 			return config.ScopeSessions, nil
 		}
 		return config.ScopeFull, nil
@@ -1009,7 +1010,7 @@ func pushCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "push",
 		Short: "Upload local changes to cloud storage",
-		Long:  `Encrypt and upload changed files from ~/.claude to cloud storage.`,
+		Long:  `Encrypt and upload changed files from ~/.codex to cloud storage.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg, err := config.Load()
 			if err != nil {
@@ -1108,7 +1109,7 @@ func pullCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "pull",
 		Short: "Download remote changes from cloud storage",
-		Long: `Download and decrypt changed files from cloud storage to ~/.claude.
+		Long: `Download and decrypt changed files from cloud storage to ~/.codex.
 
 On first pull with existing local files, you'll be prompted to confirm
 before any files are overwritten. Use --dry-run to preview changes first.
@@ -1133,7 +1134,7 @@ Examples:
 
 			// Check for first pull with existing local files
 			if !syncer.HasState() {
-				hasExisting, err := hasExistingClaudeFiles(cfg)
+				hasExisting, err := hasExistingBaseFiles(cfg)
 				if err != nil {
 					return err
 				}
@@ -1341,7 +1342,7 @@ func diffCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "diff",
 		Short: "Show differences between local and remote",
-		Long:  `Compare local ~/.claude with remote cloud storage.`,
+		Long:  `Compare local ~/.codex with remote cloud storage.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg, err := config.Load()
 			if err != nil {
@@ -1434,10 +1435,10 @@ Examples:
   codex-sync conflicts --keep local # Keep all local versions
   codex-sync conflicts --keep remote # Keep all remote versions`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			claudeDir := config.BaseDir()
+			baseDir := config.BaseDir()
 
 			// Find all .conflict files
-			conflicts, err := findConflicts(claudeDir)
+			conflicts, err := findConflicts(baseDir)
 			if err != nil {
 				return err
 			}
@@ -1450,7 +1451,7 @@ Examples:
 			fmt.Printf("%sFound %d conflict(s):%s\n\n", colorYellow, len(conflicts), colorReset)
 
 			for i, c := range conflicts {
-				relOriginal, _ := filepath.Rel(claudeDir, c.OriginalPath)
+				relOriginal, _ := filepath.Rel(baseDir, c.OriginalPath)
 				fmt.Printf("  %s%d.%s %s\n", colorCyan, i+1, colorReset, relOriginal)
 				fmt.Printf("     %sConflict from: %s%s\n", colorDim, c.Timestamp, colorReset)
 			}
@@ -1469,11 +1470,11 @@ Examples:
 
 			// Batch resolve mode
 			if resolveAll != "" {
-				return batchResolveConflicts(conflicts, resolveAll, claudeDir, state)
+				return batchResolveConflicts(conflicts, resolveAll, baseDir, state)
 			}
 
 			// Interactive mode
-			return interactiveResolveConflicts(conflicts, claudeDir, state)
+			return interactiveResolveConflicts(conflicts, baseDir, state)
 		},
 	}
 
@@ -1483,10 +1484,10 @@ Examples:
 	return cmd
 }
 
-func findConflicts(claudeDir string) ([]conflictFile, error) {
+func findConflicts(baseDir string) ([]conflictFile, error) {
 	var conflicts []conflictFile
 
-	err := filepath.Walk(claudeDir, func(path string, info os.FileInfo, err error) error {
+	err := filepath.Walk(baseDir, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return nil // Skip errors
 		}
@@ -1518,7 +1519,7 @@ func findConflicts(claudeDir string) ([]conflictFile, error) {
 	return conflicts, err
 }
 
-func batchResolveConflicts(conflicts []conflictFile, keep string, claudeDir string, state *sync.SyncState) error {
+func batchResolveConflicts(conflicts []conflictFile, keep string, baseDir string, state *sync.SyncState) error {
 	keep = strings.ToLower(keep)
 	if keep != "local" && keep != "remote" {
 		return fmt.Errorf("--keep must be 'local' or 'remote'")
@@ -1543,7 +1544,7 @@ func batchResolveConflicts(conflicts []conflictFile, keep string, claudeDir stri
 		}
 
 		// Update state with the resolved file's hash
-		relPath, _ := filepath.Rel(claudeDir, c.OriginalPath)
+		relPath, _ := filepath.Rel(baseDir, c.OriginalPath)
 		if info, err := os.Stat(c.OriginalPath); err == nil {
 			if hash, err := sync.HashFile(c.OriginalPath); err == nil {
 				state.UpdateFile(relPath, info, hash)
@@ -1564,7 +1565,7 @@ func batchResolveConflicts(conflicts []conflictFile, keep string, claudeDir stri
 	return nil
 }
 
-func interactiveResolveConflicts(conflicts []conflictFile, claudeDir string, state *sync.SyncState) error {
+func interactiveResolveConflicts(conflicts []conflictFile, baseDir string, state *sync.SyncState) error {
 	reader := bufio.NewReader(os.Stdin)
 
 	fmt.Println("For each conflict, choose how to resolve:")
@@ -1577,7 +1578,7 @@ func interactiveResolveConflicts(conflicts []conflictFile, claudeDir string, sta
 
 	resolved := 0
 	for i, c := range conflicts {
-		relOriginal, _ := filepath.Rel(claudeDir, c.OriginalPath)
+		relOriginal, _ := filepath.Rel(baseDir, c.OriginalPath)
 
 		// Get file sizes for context
 		localInfo, _ := os.Stat(c.OriginalPath)
@@ -1837,6 +1838,10 @@ Examples:
 			// Get latest release from GitHub
 			release, err := getLatestRelease()
 			if err != nil {
+				if errors.Is(err, errNoReleases) {
+					fmt.Printf("%sNo published releases yet.%s Update from source:\n  git pull && make build && make install\n", colorYellow, colorReset)
+					return nil
+				}
 				return fmt.Errorf("failed to check for updates: %w", err)
 			}
 
@@ -1919,8 +1924,21 @@ Examples:
 	return cmd
 }
 
+// githubRepo is where codex-sync publishes releases (update/changelog read from it).
+const githubRepo = "d-jiao/codex-sync"
+
+var errNoReleases = errors.New("no published releases yet")
+
+func latestReleaseURL() string {
+	return "https://api.github.com/repos/" + githubRepo + "/releases/latest"
+}
+
+func releasesURL(limit int) string {
+	return fmt.Sprintf("https://api.github.com/repos/%s/releases?per_page=%d", githubRepo, limit)
+}
+
 func getLatestRelease() (*GitHubRelease, error) {
-	url := "https://api.github.com/repos/tawanorg/codex-sync/releases/latest"
+	url := latestReleaseURL()
 
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
@@ -1936,6 +1954,9 @@ func getLatestRelease() (*GitHubRelease, error) {
 	}
 	defer func() { _ = resp.Body.Close() }()
 
+	if resp.StatusCode == http.StatusNotFound {
+		return nil, errNoReleases
+	}
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("GitHub API returned status %d", resp.StatusCode)
 	}
@@ -2116,7 +2137,7 @@ func handleKeyMismatch() (keyMismatchAction, error) {
 		Message: "What would you like to do?",
 		Options: []string{
 			"Try a different passphrase",
-			"Clear remote files and start fresh (your local ~/.claude will be pushed)",
+			"Clear remote files and start fresh (your local ~/.codex will be pushed)",
 			"Abort setup",
 		},
 	}
@@ -2154,14 +2175,14 @@ func clearRemoteStorage(ctx context.Context, store storage.Storage) error {
 	return store.DeleteBatch(ctx, keys)
 }
 
-// hasExistingClaudeFiles checks if ~/.claude has any files that would be synced
-func hasExistingClaudeFiles(cfg *config.Config) (bool, error) {
-	claudeDir := config.BaseDir()
-	if _, err := os.Stat(claudeDir); os.IsNotExist(err) {
+// hasExistingBaseFiles checks if ~/.codex has any files that would be synced
+func hasExistingBaseFiles(cfg *config.Config) (bool, error) {
+	baseDir := config.BaseDir()
+	if _, err := os.Stat(baseDir); os.IsNotExist(err) {
 		return false, nil
 	}
 
-	files, err := sync.GetLocalFiles(claudeDir, cfg.GetEffectiveSyncPaths())
+	files, err := sync.GetLocalFiles(baseDir, cfg.GetEffectiveSyncPaths())
 	if err != nil {
 		return false, err
 	}
@@ -2188,7 +2209,7 @@ func handleFirstPullWithExistingFiles(ctx context.Context, syncer *sync.Syncer, 
 
 	// Show warning
 	fmt.Println()
-	printWarning("Local ~/.claude already has files that would be affected:")
+	printWarning("Local ~/.codex already has files that would be affected:")
 	fmt.Println()
 
 	// Show files that would be overwritten
@@ -2265,11 +2286,11 @@ func handleFirstPullWithExistingFiles(ctx context.Context, syncer *sync.Syncer, 
 	}
 }
 
-// createBackup creates a backup of the current ~/.claude directory
+// createBackup creates a backup of the current ~/.codex directory
 func createBackup(syncPaths []string) (string, error) {
-	claudeDir := config.BaseDir()
+	baseDir := config.BaseDir()
 	timestamp := time.Now().Format("20060102-150405")
-	backupDir := claudeDir + ".backup." + timestamp
+	backupDir := baseDir + ".backup." + timestamp
 
 	// Create backup directory
 	if err := os.MkdirAll(backupDir, 0700); err != nil {
@@ -2277,13 +2298,13 @@ func createBackup(syncPaths []string) (string, error) {
 	}
 
 	// Copy all syncable files to backup
-	files, err := sync.GetLocalFiles(claudeDir, syncPaths)
+	files, err := sync.GetLocalFiles(baseDir, syncPaths)
 	if err != nil {
 		return "", fmt.Errorf("failed to list files: %w", err)
 	}
 
 	for relPath := range files {
-		srcPath := filepath.Join(claudeDir, relPath)
+		srcPath := filepath.Join(baseDir, relPath)
 		dstPath := filepath.Join(backupDir, relPath)
 
 		// Ensure destination directory exists
@@ -2516,6 +2537,10 @@ Examples:
 
 			releases, err := getAllReleases(limit)
 			if err != nil {
+				if errors.Is(err, errNoReleases) {
+					fmt.Printf("%sNo published releases yet.%s Update from source:\n  git pull && make build && make install\n", colorYellow, colorReset)
+					return nil
+				}
 				return fmt.Errorf("failed to fetch changelog: %w", err)
 			}
 
@@ -2526,7 +2551,7 @@ Examples:
 
 			// Header
 			fmt.Printf("%s╭─────────────────────────────────────────────────────────────╮%s\n", colorCyan, colorReset)
-			fmt.Printf("%s│%s  %sCLAUDE-SYNC CHANGELOG%s                                      %s│%s\n", colorCyan, colorReset, colorBold, colorReset, colorCyan, colorReset)
+			fmt.Printf("%s│%s  %sCODEX-SYNC CHANGELOG%s                                       %s│%s\n", colorCyan, colorReset, colorBold, colorReset, colorCyan, colorReset)
 			fmt.Printf("%s╰─────────────────────────────────────────────────────────────╯%s\n\n", colorCyan, colorReset)
 
 			currentVersion := strings.TrimPrefix(version, "v")
@@ -2587,7 +2612,7 @@ type GitHubReleaseWithBody struct {
 }
 
 func getAllReleases(limit int) ([]GitHubReleaseWithBody, error) {
-	url := fmt.Sprintf("https://api.github.com/repos/tawanorg/codex-sync/releases?per_page=%d", limit)
+	url := releasesURL(limit)
 
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
@@ -2603,6 +2628,9 @@ func getAllReleases(limit int) ([]GitHubReleaseWithBody, error) {
 	}
 	defer func() { _ = resp.Body.Close() }()
 
+	if resp.StatusCode == http.StatusNotFound {
+		return nil, errNoReleases
+	}
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("GitHub API returned status %d", resp.StatusCode)
 	}
@@ -2650,12 +2678,12 @@ func pathsCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "paths",
 		Short: "Manage sync paths and exclude filters",
-		Long: `Control which paths under ~/.claude/ are synced.
+		Long: `Control which paths under ~/.codex/ are synced.
 
 Effective sync = sync_list − exclude_list
 
 Use 'paths add' to include a path, 'paths remove' to exclude it.
-Use 'paths exclude' for sub-path glob filters (e.g., skip node_modules inside plugins/).`,
+Use 'paths exclude' for sub-path glob filters (e.g., skip node_modules inside skills/).`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runPathsList()
 		},
@@ -2748,7 +2776,7 @@ func pathsAddCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "add <path>",
 		Short: "Add a path to sync",
-		Long: `Add a relative path under ~/.claude/ to the sync list.
+		Long: `Add a relative path under ~/.codex/ to the sync list.
 
 If the path was previously removed (and has an exclude), the
 conflicting exclude is automatically removed.`,
@@ -2780,7 +2808,7 @@ conflicting exclude is automatically removed.`,
 			}
 
 			if result.PathMissing {
-				fmt.Printf("%s!%s %s does not exist under ~/.claude (adding anyway)\n", colorYellow, colorReset, args[0])
+				fmt.Printf("%s!%s %s does not exist under ~/.codex (adding anyway)\n", colorYellow, colorReset, args[0])
 			}
 
 			cfg.SyncPaths = mgr.SyncPaths()
