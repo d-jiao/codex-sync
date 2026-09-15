@@ -1,7 +1,7 @@
 #!/bin/bash
 set -euo pipefail
 
-# Publish platform-specific npm packages for claude-sync
+# Publish platform-specific npm packages for codex-sync
 # Usage: ./scripts/publish-npm.sh <version>
 # Expects binaries in bin/ directory (from build-all or CI artifacts)
 
@@ -20,22 +20,22 @@ FAILED_PLATFORMS=""
 
 # Map: npm platform → Go binary name
 declare -A PLATFORM_MAP=(
-  ["darwin-arm64"]="claude-sync-darwin-arm64"
-  ["darwin-x64"]="claude-sync-darwin-amd64"
-  ["linux-arm64"]="claude-sync-linux-arm64"
-  ["linux-x64"]="claude-sync-linux-amd64"
-  ["win32-arm64"]="claude-sync-windows-arm64.exe"
-  ["win32-x64"]="claude-sync-windows-amd64.exe"
+  ["darwin-arm64"]="codex-sync-darwin-arm64"
+  ["darwin-x64"]="codex-sync-darwin-amd64"
+  ["linux-arm64"]="codex-sync-linux-arm64"
+  ["linux-x64"]="codex-sync-linux-amd64"
+  ["win32-arm64"]="codex-sync-windows-arm64.exe"
+  ["win32-x64"]="codex-sync-windows-amd64.exe"
 )
 
 # Binary name per platform
 declare -A BINARY_NAME=(
-  ["darwin-arm64"]="claude-sync"
-  ["darwin-x64"]="claude-sync"
-  ["linux-arm64"]="claude-sync"
-  ["linux-x64"]="claude-sync"
-  ["win32-arm64"]="claude-sync.exe"
-  ["win32-x64"]="claude-sync.exe"
+  ["darwin-arm64"]="codex-sync"
+  ["darwin-x64"]="codex-sync"
+  ["linux-arm64"]="codex-sync"
+  ["linux-x64"]="codex-sync"
+  ["win32-arm64"]="codex-sync.exe"
+  ["win32-x64"]="codex-sync.exe"
 )
 
 for platform in "${!PLATFORM_MAP[@]}"; do
@@ -43,7 +43,7 @@ for platform in "${!PLATFORM_MAP[@]}"; do
   dst_binary="${BINARY_NAME[$platform]}"
   pkg_dir="$NPM_DIR/$platform"
 
-  echo "Publishing @tawandotorg/claude-sync-${platform}@${VERSION}..."
+  echo "Publishing @tawandotorg/codex-sync-${platform}@${VERSION}..."
 
   # Copy binary into package directory
   if [ -f "$ROOT_DIR/bin/$src_binary" ]; then
@@ -69,7 +69,7 @@ for platform in "${!PLATFORM_MAP[@]}"; do
   if npm publish --access public; then
     echo "  Published!"
   else
-    echo "  ERROR: failed to publish @tawandotorg/claude-sync-${platform}@${VERSION}"
+    echo "  ERROR: failed to publish @tawandotorg/codex-sync-${platform}@${VERSION}"
     FAILED_PLATFORMS="$FAILED_PLATFORMS $platform"
   fi
 
@@ -78,12 +78,12 @@ for platform in "${!PLATFORM_MAP[@]}"; do
 done
 
 # Publish main package
-echo "Publishing @tawandotorg/claude-sync@${VERSION}..."
+echo "Publishing @tawandotorg/codex-sync@${VERSION}..."
 cd "$ROOT_DIR"
 
 # Update optionalDependencies versions
 for platform in "${!PLATFORM_MAP[@]}"; do
-  sed -i.bak "s|\"@tawandotorg/claude-sync-${platform}\": \".*\"|\"@tawandotorg/claude-sync-${platform}\": \"${VERSION}\"|" package.json
+  sed -i.bak "s|\"@tawandotorg/codex-sync-${platform}\": \".*\"|\"@tawandotorg/codex-sync-${platform}\": \"${VERSION}\"|" package.json
 done
 rm -f package.json.bak
 
@@ -91,9 +91,9 @@ npm version "$VERSION" --no-git-tag-version --allow-same-version 2>/dev/null
 
 ROOT_FAILED=0
 if npm publish --access public; then
-  echo "Published @tawandotorg/claude-sync@${VERSION}!"
+  echo "Published @tawandotorg/codex-sync@${VERSION}!"
 else
-  echo "ERROR: failed to publish @tawandotorg/claude-sync@${VERSION}"
+  echo "ERROR: failed to publish @tawandotorg/codex-sync@${VERSION}"
   ROOT_FAILED=1
 fi
 

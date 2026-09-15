@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/tawanorg/claude-sync/internal/storage"
+	"github.com/d-jiao/codex-sync/internal/storage"
 )
 
 func TestScopedSyncPaths(t *testing.T) {
@@ -106,7 +106,7 @@ func TestSaveAndLoad(t *testing.T) {
 		AccessKeyID:     "test-access-key",
 		SecretAccessKey: "test-secret-key",
 		Bucket:          "test-bucket",
-		EncryptionKey:   "~/.claude-sync/age-key.txt",
+		EncryptionKey:   "~/.codex-sync/age-key.txt",
 	}
 
 	// Save config
@@ -120,7 +120,7 @@ func TestSaveAndLoad(t *testing.T) {
 access_key_id: test-access-key
 secret_access_key: test-secret-key
 bucket: test-bucket
-encryption_key_path: ~/.claude-sync/age-key.txt
+encryption_key_path: ~/.codex-sync/age-key.txt
 `
 	if err := os.WriteFile(configPath, []byte(data), 0600); err != nil {
 		t.Fatalf("Failed to write config: %v", err)
@@ -167,7 +167,7 @@ func TestLoadNotFound(t *testing.T) {
 		t.Fatal("Load should fail when config doesn't exist")
 	}
 
-	if !strings.Contains(err.Error(), "run 'claude-sync init' first") {
+	if !strings.Contains(err.Error(), "run 'codex-sync init' first") {
 		t.Errorf("Error should mention running init, got: %v", err)
 	}
 }
@@ -299,7 +299,7 @@ func TestIsLegacyConfig(t *testing.T) {
 func TestConfigSaveAndLoad(t *testing.T) {
 	// Override config dir to temp dir
 	tmpDir := t.TempDir()
-	configDir := filepath.Join(tmpDir, ".claude-sync")
+	configDir := filepath.Join(tmpDir, ".codex-sync")
 
 	// We can't easily override ConfigDirPath, so test Save/Load via direct file ops
 	if err := os.MkdirAll(configDir, 0700); err != nil {
@@ -308,7 +308,7 @@ func TestConfigSaveAndLoad(t *testing.T) {
 
 	mcpEnabled := true
 	cfg := &Config{
-		EncryptionKey: "~/.claude-sync/age-key.txt",
+		EncryptionKey: "~/.codex-sync/age-key.txt",
 		Bucket:        "test-bucket",
 		AccountID:     "test-account",
 		Exclude:       []string{"*.tmp", "cache/**"},
@@ -319,7 +319,7 @@ func TestConfigSaveAndLoad(t *testing.T) {
 	configPath := filepath.Join(configDir, "config.yaml")
 	data := `bucket: test-bucket
 account_id: test-account
-encryption_key_path: "~/.claude-sync/age-key.txt"
+encryption_key_path: "~/.codex-sync/age-key.txt"
 exclude:
   - "*.tmp"
   - "cache/**"

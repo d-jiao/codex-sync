@@ -1,6 +1,6 @@
 version: '3.8'
 
-# Cross-device integration tests for claude-sync
+# Cross-device integration tests for codex-sync
 # Each container simulates a separate device with isolated filesystem
 
 services:
@@ -11,11 +11,11 @@ services:
     tty: true
     stdin_open: true
     environment:
-      - CLAUDE_SYNC_R2_ACCOUNT_ID=${CLAUDE_SYNC_R2_ACCOUNT_ID}
-      - CLAUDE_SYNC_R2_ACCESS_KEY_ID=${CLAUDE_SYNC_R2_ACCESS_KEY_ID}
-      - CLAUDE_SYNC_R2_SECRET_ACCESS_KEY=${CLAUDE_SYNC_R2_SECRET_ACCESS_KEY}
-      - CLAUDE_SYNC_R2_BUCKET=${CLAUDE_SYNC_R2_BUCKET:-claude-sync-test}
-      - CLAUDE_SYNC_TEST_PASSPHRASE=${CLAUDE_SYNC_TEST_PASSPHRASE:-test-passphrase-123}
+      - CODEX_SYNC_R2_ACCOUNT_ID=${CODEX_SYNC_R2_ACCOUNT_ID}
+      - CODEX_SYNC_R2_ACCESS_KEY_ID=${CODEX_SYNC_R2_ACCESS_KEY_ID}
+      - CODEX_SYNC_R2_SECRET_ACCESS_KEY=${CODEX_SYNC_R2_SECRET_ACCESS_KEY}
+      - CODEX_SYNC_R2_BUCKET=${CODEX_SYNC_R2_BUCKET:-codex-sync-test}
+      - CODEX_SYNC_TEST_PASSPHRASE=${CODEX_SYNC_TEST_PASSPHRASE:-test-passphrase-123}
     volumes:
       - device-a-home:/root
     networks:
@@ -28,11 +28,11 @@ services:
     tty: true
     stdin_open: true
     environment:
-      - CLAUDE_SYNC_R2_ACCOUNT_ID=${CLAUDE_SYNC_R2_ACCOUNT_ID}
-      - CLAUDE_SYNC_R2_ACCESS_KEY_ID=${CLAUDE_SYNC_R2_ACCESS_KEY_ID}
-      - CLAUDE_SYNC_R2_SECRET_ACCESS_KEY=${CLAUDE_SYNC_R2_SECRET_ACCESS_KEY}
-      - CLAUDE_SYNC_R2_BUCKET=${CLAUDE_SYNC_R2_BUCKET:-claude-sync-test}
-      - CLAUDE_SYNC_TEST_PASSPHRASE=${CLAUDE_SYNC_TEST_PASSPHRASE:-test-passphrase-123}
+      - CODEX_SYNC_R2_ACCOUNT_ID=${CODEX_SYNC_R2_ACCOUNT_ID}
+      - CODEX_SYNC_R2_ACCESS_KEY_ID=${CODEX_SYNC_R2_ACCESS_KEY_ID}
+      - CODEX_SYNC_R2_SECRET_ACCESS_KEY=${CODEX_SYNC_R2_SECRET_ACCESS_KEY}
+      - CODEX_SYNC_R2_BUCKET=${CODEX_SYNC_R2_BUCKET:-codex-sync-test}
+      - CODEX_SYNC_TEST_PASSPHRASE=${CODEX_SYNC_TEST_PASSPHRASE:-test-passphrase-123}
     volumes:
       - device-b-home:/root
     networks:
@@ -45,11 +45,11 @@ services:
     tty: true
     stdin_open: true
     environment:
-      - CLAUDE_SYNC_R2_ACCOUNT_ID=${CLAUDE_SYNC_R2_ACCOUNT_ID}
-      - CLAUDE_SYNC_R2_ACCESS_KEY_ID=${CLAUDE_SYNC_R2_ACCESS_KEY_ID}
-      - CLAUDE_SYNC_R2_SECRET_ACCESS_KEY=${CLAUDE_SYNC_R2_SECRET_ACCESS_KEY}
-      - CLAUDE_SYNC_R2_BUCKET=${CLAUDE_SYNC_R2_BUCKET:-claude-sync-test}
-      - CLAUDE_SYNC_TEST_PASSPHRASE=${CLAUDE_SYNC_TEST_PASSPHRASE:-test-passphrase-123}
+      - CODEX_SYNC_R2_ACCOUNT_ID=${CODEX_SYNC_R2_ACCOUNT_ID}
+      - CODEX_SYNC_R2_ACCESS_KEY_ID=${CODEX_SYNC_R2_ACCESS_KEY_ID}
+      - CODEX_SYNC_R2_SECRET_ACCESS_KEY=${CODEX_SYNC_R2_SECRET_ACCESS_KEY}
+      - CODEX_SYNC_R2_BUCKET=${CODEX_SYNC_R2_BUCKET:-codex-sync-test}
+      - CODEX_SYNC_TEST_PASSPHRASE=${CODEX_SYNC_TEST_PASSPHRASE:-test-passphrase-123}
     volumes:
       - device-c-home:/root
     networks:

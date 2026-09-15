@@ -147,15 +147,15 @@ func TestClaudeSyncMatcher(t *testing.T) {
 		cmd      string
 		expected bool
 	}{
-		{"claude-sync", true},
-		{"claude-sync pull", true},
-		{"claude-sync push -q", true},
-		{"/usr/local/bin/claude-sync", true},
-		{"/usr/local/bin/claude-sync pull", true},
+		{"codex-sync", true},
+		{"codex-sync pull", true},
+		{"codex-sync push -q", true},
+		{"/usr/local/bin/codex-sync", true},
+		{"/usr/local/bin/codex-sync pull", true},
 		{"echo hello", false},
-		{"my-claude-sync", false},
-		{"claude-sync-wrapper", false},
-		{"  claude-sync pull  ", true}, // with whitespace
+		{"my-codex-sync", false},
+		{"codex-sync-wrapper", false},
+		{"  codex-sync pull  ", true}, // with whitespace
 	}
 
 	for _, tc := range tests {
@@ -488,45 +488,45 @@ func TestHasClaudeSyncHook(t *testing.T) {
 			expected: false,
 		},
 		{
-			name: "no claude-sync hooks",
+			name: "no codex-sync hooks",
 			groups: []HookGroup{{
 				Hooks: []HookEntry{{Type: "command", Command: "echo hello"}},
 			}},
 			expected: false,
 		},
 		{
-			name: "has claude-sync pull",
+			name: "has codex-sync pull",
 			groups: []HookGroup{{
-				Hooks: []HookEntry{{Type: "command", Command: "claude-sync pull -q"}},
+				Hooks: []HookEntry{{Type: "command", Command: "codex-sync pull -q"}},
 			}},
 			expected: true,
 		},
 		{
-			name: "has claude-sync push",
+			name: "has codex-sync push",
 			groups: []HookGroup{{
-				Hooks: []HookEntry{{Type: "command", Command: "claude-sync push -q"}},
+				Hooks: []HookEntry{{Type: "command", Command: "codex-sync push -q"}},
 			}},
 			expected: true,
 		},
 		{
 			name: "similar but not exact match",
 			groups: []HookGroup{{
-				Hooks: []HookEntry{{Type: "command", Command: "my-claude-sync-tool pull"}},
+				Hooks: []HookEntry{{Type: "command", Command: "my-codex-sync-tool pull"}},
 			}},
 			expected: false,
 		},
 		{
-			name: "claude-sync in middle of command",
+			name: "codex-sync in middle of command",
 			groups: []HookGroup{{
-				Hooks: []HookEntry{{Type: "command", Command: "wrapper claude-sync pull"}},
+				Hooks: []HookEntry{{Type: "command", Command: "wrapper codex-sync pull"}},
 			}},
 			expected: false,
 		},
 		{
-			name: "multiple groups with claude-sync in second",
+			name: "multiple groups with codex-sync in second",
 			groups: []HookGroup{
 				{Hooks: []HookEntry{{Type: "command", Command: "echo first"}}},
-				{Hooks: []HookEntry{{Type: "command", Command: "claude-sync push"}}},
+				{Hooks: []HookEntry{{Type: "command", Command: "codex-sync push"}}},
 			},
 			expected: true,
 		},
@@ -578,17 +578,17 @@ func TestRemoveClaudeSyncHooks(t *testing.T) {
 			expectedLen: 0,
 		},
 		{
-			name: "remove single claude-sync hook",
+			name: "remove single codex-sync hook",
 			input: []HookGroup{{
-				Hooks: []HookEntry{{Type: "command", Command: "claude-sync pull -q"}},
+				Hooks: []HookEntry{{Type: "command", Command: "codex-sync pull -q"}},
 			}},
 			expectedLen: 0,
 		},
 		{
-			name: "preserve non-claude-sync hooks",
+			name: "preserve non-codex-sync hooks",
 			input: []HookGroup{
 				{Hooks: []HookEntry{{Type: "command", Command: "echo hello"}}},
-				{Hooks: []HookEntry{{Type: "command", Command: "claude-sync push -q"}}},
+				{Hooks: []HookEntry{{Type: "command", Command: "codex-sync push -q"}}},
 			},
 			expectedLen:  1,
 			expectedCmds: []string{"echo hello"},
@@ -598,7 +598,7 @@ func TestRemoveClaudeSyncHooks(t *testing.T) {
 			input: []HookGroup{{
 				Hooks: []HookEntry{
 					{Type: "command", Command: "echo before"},
-					{Type: "command", Command: "claude-sync pull -q"},
+					{Type: "command", Command: "codex-sync pull -q"},
 					{Type: "command", Command: "echo after"},
 				},
 			}},
@@ -609,12 +609,12 @@ func TestRemoveClaudeSyncHooks(t *testing.T) {
 			name: "preserve hooks that look similar",
 			input: []HookGroup{{
 				Hooks: []HookEntry{
-					{Type: "command", Command: "my-claude-sync pull"},
-					{Type: "command", Command: "claude-sync pull"},
+					{Type: "command", Command: "my-codex-sync pull"},
+					{Type: "command", Command: "codex-sync pull"},
 				},
 			}},
 			expectedLen:  1,
-			expectedCmds: []string{"my-claude-sync pull"},
+			expectedCmds: []string{"my-codex-sync pull"},
 		},
 	}
 

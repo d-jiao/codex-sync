@@ -13,7 +13,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 
-	"github.com/tawanorg/claude-sync/internal/storage"
+	"github.com/d-jiao/codex-sync/internal/storage"
 )
 
 func init() {

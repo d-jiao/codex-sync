@@ -10,9 +10,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/tawanorg/claude-sync/internal/config"
-	"github.com/tawanorg/claude-sync/internal/crypto"
-	"github.com/tawanorg/claude-sync/internal/storage"
+	"github.com/d-jiao/codex-sync/internal/config"
+	"github.com/d-jiao/codex-sync/internal/crypto"
+	"github.com/d-jiao/codex-sync/internal/storage"
 )
 
 // mockStorage implements storage.Storage in-memory for testing.
@@ -130,7 +130,7 @@ func setupTestEnv(t *testing.T) *testEnv {
 	t.Helper()
 	tmpDir := t.TempDir()
 	claudeDir := filepath.Join(tmpDir, ".claude")
-	stateDir := filepath.Join(tmpDir, ".claude-sync")
+	stateDir := filepath.Join(tmpDir, ".codex-sync")
 
 	if err := os.MkdirAll(claudeDir, 0755); err != nil {
 		t.Fatalf("Failed to create claude dir: %v", err)
@@ -457,7 +457,7 @@ func TestPushThenPullRoundTrip(t *testing.T) {
 
 	// Device A setup
 	deviceADir := filepath.Join(tmpDir, "deviceA", ".claude")
-	deviceAStateDir := filepath.Join(tmpDir, "deviceA", ".claude-sync")
+	deviceAStateDir := filepath.Join(tmpDir, "deviceA", ".codex-sync")
 	if err := os.MkdirAll(deviceADir, 0755); err != nil {
 		t.Fatalf("Failed to create deviceA claude dir: %v", err)
 	}
@@ -491,7 +491,7 @@ func TestPushThenPullRoundTrip(t *testing.T) {
 
 	// Device B setup (fresh, no local files)
 	deviceBDir := filepath.Join(tmpDir, "deviceB", ".claude")
-	deviceBStateDir := filepath.Join(tmpDir, "deviceB", ".claude-sync")
+	deviceBStateDir := filepath.Join(tmpDir, "deviceB", ".codex-sync")
 	if err := os.MkdirAll(deviceBDir, 0755); err != nil {
 		t.Fatalf("Failed to create deviceB claude dir: %v", err)
 	}

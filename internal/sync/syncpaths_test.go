@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/tawanorg/claude-sync/internal/config"
+	"github.com/d-jiao/codex-sync/internal/config"
 )
 
 // TestSyncerHonorsCustomSyncPaths is the regression test for issue #64: the

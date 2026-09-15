@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/tawanorg/claude-sync/internal/storage"
+	"github.com/d-jiao/codex-sync/internal/storage"
 )
 
 // mockWebDAVServer simulates a WebDAV server for integration testing.

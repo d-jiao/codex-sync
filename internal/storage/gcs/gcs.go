@@ -12,7 +12,7 @@ import (
 	"google.golang.org/api/iterator"
 	"google.golang.org/api/option"
 
-	appstorage "github.com/tawanorg/claude-sync/internal/storage"
+	appstorage "github.com/d-jiao/codex-sync/internal/storage"
 )
 
 func init() {

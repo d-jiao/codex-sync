@@ -61,12 +61,12 @@ func CompareVersions(v1, v2 string) int {
 	return 0
 }
 
-// GetBinaryName returns the platform-specific binary name for claude-sync.
+// GetBinaryName returns the platform-specific binary name for codex-sync.
 func GetBinaryName(version string) string {
 	goos := runtime.GOOS
 	goarch := runtime.GOARCH
 
-	name := fmt.Sprintf("claude-sync-%s-%s", goos, goarch)
+	name := fmt.Sprintf("codex-sync-%s-%s", goos, goarch)
 	if goos == "windows" {
 		name += ".exe"
 	}

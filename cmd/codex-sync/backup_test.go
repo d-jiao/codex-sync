@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/tawanorg/claude-sync/internal/config"
+	"github.com/d-jiao/codex-sync/internal/config"
 )
 
 // TestCreateBackupSetsRestrictivePermissions verifies that the backup directory

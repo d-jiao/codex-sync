@@ -91,9 +91,9 @@ func GenerateKey(keyPath string) error {
 // The same passphrase will always generate the same key, allowing sync across devices
 // without copying key files.
 func GenerateKeyFromPassphrase(keyPath, passphrase string) error {
-	// Use a fixed salt derived from "claude-sync" - this is intentional
+	// Use a fixed salt derived from "codex-sync" - this is intentional
 	// so the same passphrase produces the same key on any device
-	salt := sha256.Sum256([]byte("claude-sync-v1"))
+	salt := sha256.Sum256([]byte("codex-sync-v1"))
 
 	// Derive 32 bytes using Argon2id (memory-hard, resistant to GPU attacks)
 	// Parameters: 64MB memory, 3 iterations, 4 threads

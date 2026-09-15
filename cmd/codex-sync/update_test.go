@@ -26,30 +26,30 @@ func TestVerifyChecksum(t *testing.T) {
 	}{
 		{
 			name:        "valid checksum",
-			checksumTxt: fmt.Sprintf("%s  claude-sync-darwin-arm64\n", correctHash),
-			assetName:   "claude-sync-darwin-arm64",
+			checksumTxt: fmt.Sprintf("%s  codex-sync-darwin-arm64\n", correctHash),
+			assetName:   "codex-sync-darwin-arm64",
 			data:        binaryData,
 			wantErr:     false,
 		},
 		{
 			name:        "valid checksum with binary mode marker",
-			checksumTxt: fmt.Sprintf("%s *claude-sync-linux-x64\n", correctHash),
-			assetName:   "claude-sync-linux-x64",
+			checksumTxt: fmt.Sprintf("%s *codex-sync-linux-x64\n", correctHash),
+			assetName:   "codex-sync-linux-x64",
 			data:        binaryData,
 			wantErr:     false,
 		},
 		{
 			name:        "checksum mismatch",
-			checksumTxt: fmt.Sprintf("%s  claude-sync-darwin-arm64\n", wrongHash),
-			assetName:   "claude-sync-darwin-arm64",
+			checksumTxt: fmt.Sprintf("%s  codex-sync-darwin-arm64\n", wrongHash),
+			assetName:   "codex-sync-darwin-arm64",
 			data:        binaryData,
 			wantErr:     true,
 			errContains: "mismatch",
 		},
 		{
 			name:        "asset not in checksums file",
-			checksumTxt: fmt.Sprintf("%s  claude-sync-darwin-arm64\n", correctHash),
-			assetName:   "claude-sync-linux-arm64",
+			checksumTxt: fmt.Sprintf("%s  codex-sync-darwin-arm64\n", correctHash),
+			assetName:   "codex-sync-linux-arm64",
 			data:        binaryData,
 			wantErr:     true,
 			errContains: "no entry",
@@ -57,25 +57,25 @@ func TestVerifyChecksum(t *testing.T) {
 		{
 			name:        "empty checksums file",
 			checksumTxt: "",
-			assetName:   "claude-sync-darwin-arm64",
+			assetName:   "codex-sync-darwin-arm64",
 			data:        binaryData,
 			wantErr:     true,
 			errContains: "no entry",
 		},
 		{
 			name: "multiple entries finds correct one",
-			checksumTxt: fmt.Sprintf(`%s  claude-sync-darwin-arm64
-abc123  claude-sync-darwin-x64
-def456  claude-sync-linux-arm64
+			checksumTxt: fmt.Sprintf(`%s  codex-sync-darwin-arm64
+abc123  codex-sync-darwin-x64
+def456  codex-sync-linux-arm64
 `, correctHash),
-			assetName: "claude-sync-darwin-arm64",
+			assetName: "codex-sync-darwin-arm64",
 			data:      binaryData,
 			wantErr:   false,
 		},
 		{
 			name:        "case insensitive hash comparison",
-			checksumTxt: fmt.Sprintf("%s  claude-sync-darwin-arm64\n", "ABCD"+correctHash[4:]),
-			assetName:   "claude-sync-darwin-arm64",
+			checksumTxt: fmt.Sprintf("%s  codex-sync-darwin-arm64\n", "ABCD"+correctHash[4:]),
+			assetName:   "codex-sync-darwin-arm64",
 			data:        binaryData,
 			wantErr:     true, // hash won't match but should attempt comparison
 			errContains: "mismatch",
@@ -132,7 +132,7 @@ func TestVerifyChecksumNoChecksumsFile(t *testing.T) {
 			BrowserDownloadURL string `json:"browser_download_url"`
 		}{
 			{
-				Name:               "claude-sync-darwin-arm64",
+				Name:               "codex-sync-darwin-arm64",
 				BrowserDownloadURL: "https://example.com/binary",
 			},
 			// No checksums.txt asset
@@ -140,7 +140,7 @@ func TestVerifyChecksumNoChecksumsFile(t *testing.T) {
 	}
 
 	// Should warn but not fail when checksums.txt is missing (older release)
-	err := verifyChecksum(release, "claude-sync-darwin-arm64", []byte("data"))
+	err := verifyChecksum(release, "codex-sync-darwin-arm64", []byte("data"))
 	if err != nil {
 		t.Errorf("verifyChecksum() with no checksums.txt should not error (old release), got: %v", err)
 	}
@@ -164,7 +164,7 @@ func TestVerifyChecksumDownloadFailure(t *testing.T) {
 		},
 	}
 
-	err := verifyChecksum(release, "claude-sync-darwin-arm64", []byte("data"))
+	err := verifyChecksum(release, "codex-sync-darwin-arm64", []byte("data"))
 	if err == nil {
 		t.Error("verifyChecksum() expected error when checksums.txt download fails")
 	}

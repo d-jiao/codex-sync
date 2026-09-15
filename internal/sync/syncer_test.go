@@ -8,8 +8,8 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/tawanorg/claude-sync/internal/config"
-	"github.com/tawanorg/claude-sync/internal/crypto"
+	"github.com/d-jiao/codex-sync/internal/config"
+	"github.com/d-jiao/codex-sync/internal/crypto"
 )
 
 // testSyncer creates a Syncer with in-memory mock storage and temp dirs using NewSyncerWith.
@@ -17,7 +17,7 @@ func testSyncer(t *testing.T) (*Syncer, *mockStorage, string) {
 	t.Helper()
 	tmpDir := t.TempDir()
 	claudeDir := filepath.Join(tmpDir, ".claude")
-	stateDir := filepath.Join(tmpDir, ".claude-sync")
+	stateDir := filepath.Join(tmpDir, ".codex-sync")
 
 	if err := os.MkdirAll(claudeDir, 0755); err != nil {
 		t.Fatalf("Failed to create claude dir: %v", err)
@@ -154,7 +154,7 @@ func TestSyncerPull_DownloadsNewFiles(t *testing.T) {
 	// Create syncer2 sharing the same storage and encryptor
 	tmpDir2 := t.TempDir()
 	claudeDir2 := filepath.Join(tmpDir2, ".claude")
-	stateDir2 := filepath.Join(tmpDir2, ".claude-sync")
+	stateDir2 := filepath.Join(tmpDir2, ".codex-sync")
 	if err := os.MkdirAll(claudeDir2, 0755); err != nil {
 		t.Fatalf("Failed to create claudeDir2: %v", err)
 	}
@@ -359,7 +359,7 @@ func TestSyncerPullMCP_RoundTrip(t *testing.T) {
 
 	// Create syncer2 sharing the same storage and encryptor
 	tmpDir2 := t.TempDir()
-	stateDir2 := filepath.Join(tmpDir2, ".claude-sync")
+	stateDir2 := filepath.Join(tmpDir2, ".codex-sync")
 	claudeDir2 := filepath.Join(tmpDir2, ".claude")
 	if err := os.MkdirAll(stateDir2, 0700); err != nil {
 		t.Fatalf("Failed to create stateDir2: %v", err)

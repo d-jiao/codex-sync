@@ -19,9 +19,9 @@ import (
 // Constants for hook configuration
 const (
 	// HookCommandPull is the command installed for SessionStart.
-	HookCommandPull = "claude-sync pull -q"
+	HookCommandPull = "codex-sync pull -q"
 	// HookCommandPush is the command installed for Stop.
-	HookCommandPush = "claude-sync push -q"
+	HookCommandPush = "codex-sync push -q"
 
 	// HookTypeCommand is the standard hook type for shell commands.
 	HookTypeCommand = "command"
@@ -123,25 +123,25 @@ var defaultRepo SettingsRepository = &FileRepository{}
 
 // --- Command Matcher Implementations ---
 
-// ClaudeSyncMatcher implements CommandMatcher for claude-sync commands.
+// ClaudeSyncMatcher implements CommandMatcher for codex-sync commands.
 // It uses exact prefix matching to avoid false positives.
 type ClaudeSyncMatcher struct{}
 
-// Matches returns true if the command is a claude-sync command.
+// Matches returns true if the command is a codex-sync command.
 func (m *ClaudeSyncMatcher) Matches(cmd string) bool {
 	cmd = strings.TrimSpace(cmd)
-	// Direct match: "claude-sync" or "claude-sync <args>"
-	if cmd == "claude-sync" || strings.HasPrefix(cmd, "claude-sync ") {
+	// Direct match: "codex-sync" or "codex-sync <args>"
+	if cmd == "codex-sync" || strings.HasPrefix(cmd, "codex-sync ") {
 		return true
 	}
-	// Match with absolute path: "/usr/local/bin/claude-sync <args>"
-	if strings.HasSuffix(cmd, "/claude-sync") || strings.Contains(cmd, "/claude-sync ") {
+	// Match with absolute path: "/usr/local/bin/codex-sync <args>"
+	if strings.HasSuffix(cmd, "/codex-sync") || strings.Contains(cmd, "/codex-sync ") {
 		return true
 	}
 	return false
 }
 
-// defaultMatcher is the matcher used for claude-sync command detection.
+// defaultMatcher is the matcher used for codex-sync command detection.
 var defaultMatcher CommandMatcher = &ClaudeSyncMatcher{}
 
 // --- Path Resolution ---
@@ -271,7 +271,7 @@ func (s *Settings) Save(path string) error {
 
 // --- Hook Detection ---
 
-// HasClaudeSyncHook returns true if any hook in the groups is a claude-sync command.
+// HasClaudeSyncHook returns true if any hook in the groups is a codex-sync command.
 func HasClaudeSyncHook(groups []HookGroup) bool {
 	return HasMatchingHook(groups, defaultMatcher)
 }
@@ -328,9 +328,9 @@ func AddHook(groups []HookGroup, command string) []HookGroup {
 	})
 }
 
-// RemoveClaudeSyncHooks removes all claude-sync hook entries.
+// RemoveClaudeSyncHooks removes all codex-sync hook entries.
 // Groups that become empty are dropped entirely.
-// Non-claude-sync hooks are preserved.
+// Non-codex-sync hooks are preserved.
 func RemoveClaudeSyncHooks(groups []HookGroup) []HookGroup {
 	return RemoveMatchingHooks(groups, defaultMatcher)
 }
@@ -358,7 +358,7 @@ func RemoveMatchingHooks(groups []HookGroup, matcher CommandMatcher) []HookGroup
 
 // --- Auto-Sync Operations ---
 
-// EnableAutoSync adds claude-sync hooks for SessionStart and Stop events.
+// EnableAutoSync adds codex-sync hooks for SessionStart and Stop events.
 // Returns true if any changes were made, false if hooks were already present.
 func (s *Settings) EnableAutoSync() bool {
 	return s.EnableAutoSyncWithConfig(DefaultAutoSyncConfig())
@@ -382,7 +382,7 @@ func (s *Settings) EnableAutoSyncWithConfig(cfg AutoSyncConfig) bool {
 	return changed
 }
 
-// DisableAutoSync removes all claude-sync hooks from SessionStart and Stop events.
+// DisableAutoSync removes all codex-sync hooks from SessionStart and Stop events.
 // Returns true if any changes were made, false if no hooks were present.
 func (s *Settings) DisableAutoSync() bool {
 	return s.DisableAutoSyncWithConfig(DefaultAutoSyncConfig())

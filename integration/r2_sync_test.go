@@ -1,6 +1,6 @@
 //go:build integration
 
-// Package integration provides cross-device integration tests for claude-sync.
+// Package integration provides cross-device integration tests for codex-sync.
 // These tests require real R2 credentials and simulate multiple devices using temp directories.
 //
 // To run these tests:
@@ -17,13 +17,13 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/tawanorg/claude-sync/internal/config"
-	"github.com/tawanorg/claude-sync/internal/crypto"
-	"github.com/tawanorg/claude-sync/internal/storage"
-	"github.com/tawanorg/claude-sync/internal/sync"
+	"github.com/d-jiao/codex-sync/internal/config"
+	"github.com/d-jiao/codex-sync/internal/crypto"
+	"github.com/d-jiao/codex-sync/internal/storage"
+	"github.com/d-jiao/codex-sync/internal/sync"
 
 	// Register storage adapters
-	_ "github.com/tawanorg/claude-sync/internal/storage/r2"
+	_ "github.com/d-jiao/codex-sync/internal/storage/r2"
 )
 
 // TestBasicCrossDeviceSync tests the core sync flow:
@@ -169,7 +169,7 @@ func TestKeyMismatchDetection(t *testing.T) {
 			t.Fatalf("failed to create storage: %v", err)
 		}
 
-		keyPath := filepath.Join(deviceBDir, ".claude-sync", "age-key.txt")
+		keyPath := filepath.Join(deviceBDir, ".codex-sync", "age-key.txt")
 
 		// This should fail - the key doesn't match
 		err = verifyKeyMatchesRemote(ctx, store, keyPath)
@@ -458,7 +458,7 @@ func TestConflictResolution(t *testing.T) {
 // Helper functions
 
 func getTestPassphrase() string {
-	if p := os.Getenv("CLAUDE_SYNC_TEST_PASSPHRASE"); p != "" {
+	if p := os.Getenv("CODEX_SYNC_TEST_PASSPHRASE"); p != "" {
 		return p
 	}
 	return "test-passphrase-123"
@@ -467,10 +467,10 @@ func getTestPassphrase() string {
 func getTestStorageConfig() *storage.StorageConfig {
 	return &storage.StorageConfig{
 		Provider:        storage.ProviderR2,
-		Bucket:          getEnvOrDefault("CLAUDE_SYNC_R2_BUCKET", "claude-sync-test"),
-		AccountID:       os.Getenv("CLAUDE_SYNC_R2_ACCOUNT_ID"),
-		AccessKeyID:     os.Getenv("CLAUDE_SYNC_R2_ACCESS_KEY_ID"),
-		SecretAccessKey: os.Getenv("CLAUDE_SYNC_R2_SECRET_ACCESS_KEY"),
+		Bucket:          getEnvOrDefault("CODEX_SYNC_R2_BUCKET", "codex-sync-test"),
+		AccountID:       os.Getenv("CODEX_SYNC_R2_ACCOUNT_ID"),
+		AccessKeyID:     os.Getenv("CODEX_SYNC_R2_ACCESS_KEY_ID"),
+		SecretAccessKey: os.Getenv("CODEX_SYNC_R2_SECRET_ACCESS_KEY"),
 	}
 }
 
@@ -485,15 +485,15 @@ func setupTestConfig(t *testing.T, baseDir, passphrase string) *config.Config {
 	t.Helper()
 
 	// Verify R2 credentials are available
-	accountID := os.Getenv("CLAUDE_SYNC_R2_ACCOUNT_ID")
-	accessKeyID := os.Getenv("CLAUDE_SYNC_R2_ACCESS_KEY_ID")
-	secretAccessKey := os.Getenv("CLAUDE_SYNC_R2_SECRET_ACCESS_KEY")
+	accountID := os.Getenv("CODEX_SYNC_R2_ACCOUNT_ID")
+	accessKeyID := os.Getenv("CODEX_SYNC_R2_ACCESS_KEY_ID")
+	secretAccessKey := os.Getenv("CODEX_SYNC_R2_SECRET_ACCESS_KEY")
 
 	if accountID == "" || accessKeyID == "" || secretAccessKey == "" {
 		t.Skip("R2 credentials not set - skipping integration test")
 	}
 
-	configDir := filepath.Join(baseDir, ".claude-sync")
+	configDir := filepath.Join(baseDir, ".codex-sync")
 	claudeDir := filepath.Join(baseDir, ".claude")
 
 	if err := os.MkdirAll(configDir, 0700); err != nil {
@@ -511,7 +511,7 @@ func setupTestConfig(t *testing.T, baseDir, passphrase string) *config.Config {
 
 	storageCfg := &storage.StorageConfig{
 		Provider:        storage.ProviderR2,
-		Bucket:          getEnvOrDefault("CLAUDE_SYNC_R2_BUCKET", "claude-sync-test"),
+		Bucket:          getEnvOrDefault("CODEX_SYNC_R2_BUCKET", "codex-sync-test"),
 		AccountID:       accountID,
 		AccessKeyID:     accessKeyID,
 		SecretAccessKey: secretAccessKey,
@@ -553,7 +553,7 @@ func cleanupRemote(t *testing.T, baseDir string) {
 }
 
 // verifyKeyMatchesRemote is duplicated here for testing
-// In production, this is in cmd/claude-sync/main.go
+// In production, this is in cmd/codex-sync/main.go
 func verifyKeyMatchesRemote(ctx context.Context, store storage.Storage, keyPath string) error {
 	objects, err := store.List(ctx, "")
 	if err != nil || len(objects) == 0 {

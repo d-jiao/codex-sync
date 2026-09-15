@@ -7,12 +7,12 @@ import (
 	"strings"
 
 	"github.com/bmatcuk/doublestar/v4"
-	"github.com/tawanorg/claude-sync/internal/storage"
+	"github.com/d-jiao/codex-sync/internal/storage"
 	"gopkg.in/yaml.v3"
 )
 
 const (
-	ConfigDir  = ".claude-sync"
+	ConfigDir  = ".codex-sync"
 	ConfigFile = "config.yaml"
 	StateFile  = "state.json"
 	AgeKeyFile = "age-key.txt"
@@ -176,7 +176,7 @@ func Load() (*Config, error) {
 	data, err := os.ReadFile(configPath)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return nil, fmt.Errorf("config not found: run 'claude-sync init' first")
+			return nil, fmt.Errorf("config not found: run 'codex-sync init' first")
 		}
 		return nil, fmt.Errorf("failed to read config: %w", err)
 	}
@@ -269,7 +269,7 @@ func (c *Config) IsLegacyConfig() bool {
 // bundles node_modules and .venv). Under "full" scope the custom list wins
 // outright, since there is nothing narrower to protect.
 //
-// This matters because `claude-sync paths add|remove` materializes the entire
+// This matters because `codex-sync paths add|remove` materializes the entire
 // default path list into SyncPaths, so most configs carrying a sync_paths block
 // never explicitly opted into one.
 //

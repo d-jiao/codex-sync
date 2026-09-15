@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/tawanorg/claude-sync/internal/config"
+	"github.com/d-jiao/codex-sync/internal/config"
 )
 
 func TestNewManager(t *testing.T) {

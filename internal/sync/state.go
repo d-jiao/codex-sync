@@ -12,7 +12,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/tawanorg/claude-sync/internal/config"
+	"github.com/d-jiao/codex-sync/internal/config"
 )
 
 type FileState struct {

@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/tawanorg/claude-sync/internal/storage"
+	"github.com/d-jiao/codex-sync/internal/storage"
 )
 
 func TestNew(t *testing.T) {
@@ -23,7 +23,7 @@ func TestNew(t *testing.T) {
 				WebDAVURL:      "https://cloud.example.com/remote.php/dav/files/user/",
 				WebDAVUsername: "user",
 				WebDAVPassword: "pass",
-				PathPrefix:     "claude-sync",
+				PathPrefix:     "codex-sync",
 			},
 			wantErr: false,
 		},
@@ -108,10 +108,10 @@ func TestClientURLBuilding(t *testing.T) {
 		{
 			name:           "with path prefix",
 			baseURL:        "https://cloud.example.com/dav",
-			pathPrefix:     "claude-sync",
+			pathPrefix:     "codex-sync",
 			key:            "sessions/abc.age",
-			wantFullURL:    "https://cloud.example.com/dav/claude-sync/sessions/abc.age",
-			wantCollection: "https://cloud.example.com/dav/claude-sync/",
+			wantFullURL:    "https://cloud.example.com/dav/codex-sync/sessions/abc.age",
+			wantCollection: "https://cloud.example.com/dav/codex-sync/",
 		},
 		{
 			name:           "without path prefix",
@@ -542,7 +542,7 @@ func TestBucketExistsAutoCreate(t *testing.T) {
 
 	client := &Client{
 		baseURL:    server.URL,
-		pathPrefix: "claude-sync", // with prefix, 404 triggers auto-create
+		pathPrefix: "codex-sync", // with prefix, 404 triggers auto-create
 		username:   "user",
 		password:   "pass",
 		httpClient: server.Client(),
@@ -646,16 +646,16 @@ func multistatusFor(dir string, files, dirs []string) string {
 // Depth: infinity PROPFIND (as Synology WebDAV Server and Apache mod_dav do),
 // List falls back to a recursive Depth: 1 walk and still enumerates every file.
 func TestListDepthInfinityFallback(t *testing.T) {
-	const prefix = "claude-sync"
+	const prefix = "codex-sync"
 
-	// Tree under /claude-sync/:
+	// Tree under /codex-sync/:
 	//   settings.enc
 	//   sessions/a.enc
 	//   sessions/nested/b.enc
 	tree := map[string]string{
-		"/claude-sync/":                 multistatusFor("/claude-sync/", []string{"settings.enc"}, []string{"sessions"}),
-		"/claude-sync/sessions/":        multistatusFor("/claude-sync/sessions/", []string{"a.enc"}, []string{"nested"}),
-		"/claude-sync/sessions/nested/": multistatusFor("/claude-sync/sessions/nested/", []string{"b.enc"}, nil),
+		"/codex-sync/":                 multistatusFor("/codex-sync/", []string{"settings.enc"}, []string{"sessions"}),
+		"/codex-sync/sessions/":        multistatusFor("/codex-sync/sessions/", []string{"a.enc"}, []string{"nested"}),
+		"/codex-sync/sessions/nested/": multistatusFor("/codex-sync/sessions/nested/", []string{"b.enc"}, nil),
 	}
 
 	var infinityAttempts, depth1Requests int
@@ -723,16 +723,16 @@ func TestListDepthInfinityFallback(t *testing.T) {
 // TestListDepthInfinitySuccess verifies the fast path: a server that honors
 // Depth: infinity is listed in a single request with no fallback walk.
 func TestListDepthInfinitySuccess(t *testing.T) {
-	const prefix = "claude-sync"
+	const prefix = "codex-sync"
 
 	full := `<?xml version="1.0"?><d:multistatus xmlns:d="DAV:">` +
-		`<d:response><d:href>/claude-sync/</d:href><d:propstat><d:prop>` +
+		`<d:response><d:href>/codex-sync/</d:href><d:propstat><d:prop>` +
 		`<d:resourcetype><d:collection/></d:resourcetype></d:prop><d:status>HTTP/1.1 200 OK</d:status></d:propstat></d:response>` +
-		`<d:response><d:href>/claude-sync/settings.enc</d:href><d:propstat><d:prop>` +
+		`<d:response><d:href>/codex-sync/settings.enc</d:href><d:propstat><d:prop>` +
 		`<d:resourcetype/><d:getcontentlength>10</d:getcontentlength>` +
 		`<d:getlastmodified>Mon, 14 Apr 2025 10:00:00 GMT</d:getlastmodified><d:getetag>"x"</d:getetag></d:prop>` +
 		`<d:status>HTTP/1.1 200 OK</d:status></d:propstat></d:response>` +
-		`<d:response><d:href>/claude-sync/sessions/a.enc</d:href><d:propstat><d:prop>` +
+		`<d:response><d:href>/codex-sync/sessions/a.enc</d:href><d:propstat><d:prop>` +
 		`<d:resourcetype/><d:getcontentlength>10</d:getcontentlength>` +
 		`<d:getlastmodified>Mon, 14 Apr 2025 10:00:00 GMT</d:getlastmodified><d:getetag>"y"</d:getetag></d:prop>` +
 		`<d:status>HTTP/1.1 200 OK</d:status></d:propstat></d:response>` +

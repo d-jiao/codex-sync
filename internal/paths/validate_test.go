@@ -3,7 +3,7 @@ package paths
 import (
 	"testing"
 
-	"github.com/tawanorg/claude-sync/internal/config"
+	"github.com/d-jiao/codex-sync/internal/config"
 )
 
 func TestValidatePath(t *testing.T) {

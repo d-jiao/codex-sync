@@ -9,7 +9,7 @@ func TestParsePropfindResponse(t *testing.T) {
 	xmlData := []byte(`<?xml version="1.0"?>
 <d:multistatus xmlns:d="DAV:" xmlns:s="http://sabredav.org/ns" xmlns:oc="http://owncloud.org/ns" xmlns:nc="http://nextcloud.org/ns">
   <d:response>
-    <d:href>/remote.php/dav/files/user/claude-sync/</d:href>
+    <d:href>/remote.php/dav/files/user/codex-sync/</d:href>
     <d:propstat>
       <d:prop>
         <d:resourcetype><d:collection/></d:resourcetype>
@@ -19,7 +19,7 @@ func TestParsePropfindResponse(t *testing.T) {
     </d:propstat>
   </d:response>
   <d:response>
-    <d:href>/remote.php/dav/files/user/claude-sync/sessions/abc123.enc</d:href>
+    <d:href>/remote.php/dav/files/user/codex-sync/sessions/abc123.enc</d:href>
     <d:propstat>
       <d:prop>
         <d:resourcetype/>
@@ -31,7 +31,7 @@ func TestParsePropfindResponse(t *testing.T) {
     </d:propstat>
   </d:response>
   <d:response>
-    <d:href>/remote.php/dav/files/user/claude-sync/settings.enc</d:href>
+    <d:href>/remote.php/dav/files/user/codex-sync/settings.enc</d:href>
     <d:propstat>
       <d:prop>
         <d:resourcetype/>
@@ -80,7 +80,7 @@ func TestParsePropfindResponseURLDecoding(t *testing.T) {
 	xmlData := []byte(`<?xml version="1.0"?>
 <d:multistatus xmlns:d="DAV:">
   <d:response>
-    <d:href>/remote.php/dav/files/user/claude-sync/path%20with%20spaces/file.enc</d:href>
+    <d:href>/remote.php/dav/files/user/codex-sync/path%20with%20spaces/file.enc</d:href>
     <d:propstat>
       <d:prop>
         <d:resourcetype/>
@@ -102,7 +102,7 @@ func TestParsePropfindResponseURLDecoding(t *testing.T) {
 		t.Fatalf("expected 1 response, got %d", len(results))
 	}
 
-	expected := "/remote.php/dav/files/user/claude-sync/path with spaces/file.enc"
+	expected := "/remote.php/dav/files/user/codex-sync/path with spaces/file.enc"
 	if results[0].Href != expected {
 		t.Errorf("expected decoded href %q, got %q", expected, results[0].Href)
 	}
@@ -112,7 +112,7 @@ func TestParsePropfindResponseNon200Status(t *testing.T) {
 	xmlData := []byte(`<?xml version="1.0"?>
 <d:multistatus xmlns:d="DAV:">
   <d:response>
-    <d:href>/remote.php/dav/files/user/claude-sync/file.enc</d:href>
+    <d:href>/remote.php/dav/files/user/codex-sync/file.enc</d:href>
     <d:propstat>
       <d:prop>
         <d:getcontentlength>999</d:getcontentlength>

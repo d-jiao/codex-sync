@@ -12,7 +12,7 @@ func TestResetClearsConfigDir(t *testing.T) {
 	t.Setenv("HOME", tmpDir)
 
 	// Create mock config directory
-	configDir := filepath.Join(tmpDir, ".claude-sync")
+	configDir := filepath.Join(tmpDir, ".codex-sync")
 	if err := os.MkdirAll(configDir, 0700); err != nil {
 		t.Fatalf("Failed to create config dir: %v", err)
 	}
@@ -50,7 +50,7 @@ func TestResetClearsStateFile(t *testing.T) {
 	t.Setenv("HOME", tmpDir)
 
 	// Create config dir and state file
-	configDir := filepath.Join(tmpDir, ".claude-sync")
+	configDir := filepath.Join(tmpDir, ".codex-sync")
 	if err := os.MkdirAll(configDir, 0700); err != nil {
 		t.Fatalf("Failed to create config dir: %v", err)
 	}
@@ -82,7 +82,7 @@ func TestResetPreservesClaudeDir(t *testing.T) {
 	t.Setenv("HOME", tmpDir)
 
 	// Create both directories
-	configDir := filepath.Join(tmpDir, ".claude-sync")
+	configDir := filepath.Join(tmpDir, ".codex-sync")
 	claudeDir := filepath.Join(tmpDir, ".claude")
 
 	if err := os.MkdirAll(configDir, 0700); err != nil {

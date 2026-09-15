@@ -5,8 +5,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/tawanorg/claude-sync/internal/config"
-	"github.com/tawanorg/claude-sync/internal/crypto"
+	"github.com/d-jiao/codex-sync/internal/config"
+	"github.com/d-jiao/codex-sync/internal/crypto"
 )
 
 // TestFullWorkflowWithLocalState tests the sync workflow with real crypto
@@ -15,7 +15,7 @@ func TestFullWorkflowWithLocalState(t *testing.T) {
 	// Set up temporary directories
 	tmpDir := t.TempDir()
 	claudeDir := filepath.Join(tmpDir, ".claude")
-	configDir := filepath.Join(tmpDir, ".claude-sync")
+	configDir := filepath.Join(tmpDir, ".codex-sync")
 
 	if err := os.MkdirAll(claudeDir, 0755); err != nil {
 		t.Fatalf("Failed to create claude dir: %v", err)

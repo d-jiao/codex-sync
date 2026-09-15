@@ -161,7 +161,7 @@ func TestStorageConfig_Validate(t *testing.T) {
 				WebDAVURL:      "https://cloud.example.com/remote.php/dav/files/user/",
 				WebDAVUsername: "user",
 				WebDAVPassword: "app-password",
-				PathPrefix:     "claude-sync",
+				PathPrefix:     "codex-sync",
 			},
 			wantErr: false,
 		},

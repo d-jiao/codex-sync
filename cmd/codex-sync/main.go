@@ -20,19 +20,19 @@ import (
 	"github.com/AlecAivazis/survey/v2"
 	"github.com/spf13/cobra"
 
-	"github.com/tawanorg/claude-sync/internal/claudesettings"
-	"github.com/tawanorg/claude-sync/internal/config"
-	"github.com/tawanorg/claude-sync/internal/crypto"
-	"github.com/tawanorg/claude-sync/internal/paths"
-	"github.com/tawanorg/claude-sync/internal/storage"
-	"github.com/tawanorg/claude-sync/internal/sync"
-	"github.com/tawanorg/claude-sync/internal/util"
+	"github.com/d-jiao/codex-sync/internal/claudesettings"
+	"github.com/d-jiao/codex-sync/internal/config"
+	"github.com/d-jiao/codex-sync/internal/crypto"
+	"github.com/d-jiao/codex-sync/internal/paths"
+	"github.com/d-jiao/codex-sync/internal/storage"
+	"github.com/d-jiao/codex-sync/internal/sync"
+	"github.com/d-jiao/codex-sync/internal/util"
 
 	// Register storage adapters
-	_ "github.com/tawanorg/claude-sync/internal/storage/gcs"
-	_ "github.com/tawanorg/claude-sync/internal/storage/r2"
-	_ "github.com/tawanorg/claude-sync/internal/storage/s3"
-	_ "github.com/tawanorg/claude-sync/internal/storage/webdav"
+	_ "github.com/d-jiao/codex-sync/internal/storage/gcs"
+	_ "github.com/d-jiao/codex-sync/internal/storage/r2"
+	_ "github.com/d-jiao/codex-sync/internal/storage/s3"
+	_ "github.com/d-jiao/codex-sync/internal/storage/webdav"
 )
 
 var (
@@ -52,7 +52,7 @@ const (
 
 func main() {
 	rootCmd := &cobra.Command{
-		Use:     "claude-sync",
+		Use:     "codex-sync",
 		Short:   "Sync Claude Code sessions across devices",
 		Long:    `A CLI tool to sync your ~/.claude directory across devices using cloud storage with encryption.`,
 		Version: version,
@@ -84,7 +84,7 @@ func main() {
 
 func printBanner() {
 	fmt.Println()
-	fmt.Printf("  %sWelcome to Claude Sync!%s %sv%s%s\n", colorBold, colorReset, colorDim, version, colorReset)
+	fmt.Printf("  %sWelcome to Codex Sync!%s %sv%s%s\n", colorBold, colorReset, colorDim, version, colorReset)
 	fmt.Println()
 
 	// Block-style ASCII art - CLAUDE SYNC on one line
@@ -98,7 +98,7 @@ func printBanner() {
 	fmt.Printf("%s\n", colorReset)
 
 	fmt.Printf("  %sSync your Claude Code sessions across all your devices.%s\n", colorDim, colorReset)
-	fmt.Printf("  %sIssues & PRs welcome: %shttps://github.com/tawanorg/claude-sync%s\n", colorDim, colorCyan, colorReset)
+	fmt.Printf("  %sIssues & PRs welcome: %shttps://github.com/d-jiao/codex-sync%s\n", colorDim, colorCyan, colorReset)
 	fmt.Println()
 }
 
@@ -141,7 +141,7 @@ func initCmd() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "init",
-		Short: "Initialize claude-sync configuration",
+		Short: "Initialize codex-sync configuration",
 		Long: `Set up cloud storage credentials and generate encryption keys.
 
 Supported providers:
@@ -152,10 +152,10 @@ Supported providers:
   - webdav:        WebDAV (Nextcloud, ownCloud, etc. - self-hosted)
 
 Examples:
-  claude-sync init                # Full setup wizard
-  claude-sync init --passphrase   # Re-enter passphrase only (keeps storage config)
-  claude-sync init --force        # Reset everything, start fresh
-  claude-sync init --provider s3-compatible --endpoint https://s3.us-west-004.backblazeb2.com   # Backblaze B2`,
+  codex-sync init                # Full setup wizard
+  codex-sync init --passphrase   # Re-enter passphrase only (keeps storage config)
+  codex-sync init --force        # Reset everything, start fresh
+  codex-sync init --provider s3-compatible --endpoint https://s3.us-west-004.backblazeb2.com   # Backblaze B2`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			// Show banner
 			printBanner()
@@ -200,7 +200,7 @@ Examples:
 	cmd.Flags().StringVar(&webdavURL, "webdav-url", "", "WebDAV URL (e.g. https://cloud.example.com/remote.php/dav/files/user/)")
 	cmd.Flags().StringVar(&webdavUsername, "webdav-username", "", "WebDAV username")
 	cmd.Flags().StringVar(&webdavPassword, "webdav-password", "", "WebDAV app password")
-	cmd.Flags().StringVar(&webdavPathPrefix, "webdav-path-prefix", "claude-sync", "WebDAV path prefix (subdirectory)")
+	cmd.Flags().StringVar(&webdavPathPrefix, "webdav-path-prefix", "codex-sync", "WebDAV path prefix (subdirectory)")
 
 	return cmd
 }
@@ -460,9 +460,9 @@ skipKeyGen:
 			printInfo("The remote bucket has files encrypted with a different key.")
 			fmt.Println()
 			printInfo("Options:")
-			printInfo("  1. Run 'claude-sync init --passphrase' to try a different passphrase")
+			printInfo("  1. Run 'codex-sync init --passphrase' to try a different passphrase")
 			printInfo("  2. Copy the age-key.txt from your original device")
-			printInfo("  3. Run 'claude-sync reset --remote' to clear remote and start fresh")
+			printInfo("  3. Run 'codex-sync reset --remote' to clear remote and start fresh")
 			fmt.Println()
 			return fmt.Errorf("encryption key mismatch - cannot sync with remote")
 		}
@@ -478,7 +478,7 @@ skipKeyGen:
 	// Save config
 	cfg := &config.Config{
 		Storage:       storageCfg,
-		EncryptionKey: "~/.claude-sync/age-key.txt",
+		EncryptionKey: "~/.codex-sync/age-key.txt",
 	}
 	if scope == config.ScopeSessions {
 		cfg.Scope = config.ScopeSessions
@@ -492,8 +492,8 @@ skipKeyGen:
 	fmt.Println()
 	fmt.Println(colorGreen + "  Setup complete!" + colorReset)
 	fmt.Println()
-	printInfo("Run 'claude-sync push' to upload your sessions")
-	printInfo("Run 'claude-sync pull' on other devices to sync")
+	printInfo("Run 'codex-sync push' to upload your sessions")
+	printInfo("Run 'codex-sync pull' on other devices to sync")
 	fmt.Println()
 
 	return nil
@@ -618,7 +618,7 @@ func runR2Wizard(accountID, accessKey, secretKey, bucket string) (*storage.Stora
 			Name: "Bucket",
 			Prompt: &survey.Input{
 				Message: "Bucket name:",
-				Default: "claude-sync",
+				Default: "codex-sync",
 			},
 			Validate: survey.Required,
 		},
@@ -713,7 +713,7 @@ func runS3Wizard(accessKey, secretKey, region, bucket string) (*storage.StorageC
 			Name: "Bucket",
 			Prompt: &survey.Input{
 				Message: "Bucket name:",
-				Default: "claude-sync",
+				Default: "codex-sync",
 			},
 			Validate: survey.Required,
 		},
@@ -802,7 +802,7 @@ func runS3CompatibleWizard(endpoint, accessKey, secretKey, region, bucket string
 			Name: "Bucket",
 			Prompt: &survey.Input{
 				Message: "Bucket name:",
-				Default: "claude-sync",
+				Default: "codex-sync",
 			},
 			Validate: survey.Required,
 		},
@@ -874,7 +874,7 @@ func runGCSWizard(projectID, credentialsFile, bucket string) (*storage.StorageCo
 			Name: "Bucket",
 			Prompt: &survey.Input{
 				Message: "Bucket name:",
-				Default: "claude-sync",
+				Default: "codex-sync",
 			},
 			Validate: survey.Required,
 		},
@@ -980,7 +980,7 @@ func runWebDAVWizard(webdavURL, username, password, pathPrefix string) (*storage
 					if pathPrefix != "" {
 						return pathPrefix
 					}
-					return "claude-sync"
+					return "codex-sync"
 				}(),
 			},
 			Validate: survey.Required,
@@ -1129,9 +1129,9 @@ On first pull with existing local files, you'll be prompted to confirm
 before any files are overwritten. Use --dry-run to preview changes first.
 
 Examples:
-  claude-sync pull              # Pull with safety prompts
-  claude-sync pull --dry-run    # Preview what would be changed
-  claude-sync pull --force      # Skip confirmation prompts`,
+  codex-sync pull              # Pull with safety prompts
+  codex-sync pull --dry-run    # Preview what would be changed
+  codex-sync pull --force      # Skip confirmation prompts`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg, err := config.Load()
 			if err != nil {
@@ -1228,7 +1228,7 @@ Examples:
 							fmt.Printf("  %s•%s %s\n", colorYellow, colorReset, c)
 						}
 						fmt.Printf("\n%sLocal versions kept. Remote saved as .conflict files.%s\n", colorDim, colorReset)
-						fmt.Printf("%sRun '%sclaude-sync conflicts%s%s' to review and resolve.%s\n", colorDim, colorCyan, colorReset, colorDim, colorReset)
+						fmt.Printf("%sRun '%scodex-sync conflicts%s%s' to review and resolve.%s\n", colorDim, colorCyan, colorReset, colorDim, colorReset)
 					}
 
 					if len(result.Errors) > 0 {
@@ -1436,10 +1436,10 @@ When both local and remote files change, the remote version is saved
 as a .conflict file. Use this command to review and resolve them.
 
 Examples:
-  claude-sync conflicts              # Interactive resolution
-  claude-sync conflicts --list       # Just list conflicts
-  claude-sync conflicts --keep local # Keep all local versions
-  claude-sync conflicts --keep remote # Keep all remote versions`,
+  codex-sync conflicts              # Interactive resolution
+  codex-sync conflicts --list       # Just list conflicts
+  codex-sync conflicts --keep local # Keep all local versions
+  codex-sync conflicts --keep remote # Keep all remote versions`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			claudeDir := config.ClaudeDir()
 
@@ -1715,21 +1715,21 @@ func resetCmd() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "reset",
-		Short: "Reset claude-sync (clear data and start fresh)",
-		Long: `Reset claude-sync configuration and optionally clear remote/local data.
+		Short: "Reset codex-sync (clear data and start fresh)",
+		Long: `Reset codex-sync configuration and optionally clear remote/local data.
 
 Use this if you forgot your passphrase or want to start fresh.
 
 Examples:
-  claude-sync reset                    # Clear local config only
-  claude-sync reset --remote           # Also delete all files from cloud storage
-  claude-sync reset --local            # Also clear local sync state
-  claude-sync reset --remote --local   # Full reset (nuclear option)`,
+  codex-sync reset                    # Clear local config only
+  codex-sync reset --remote           # Also delete all files from cloud storage
+  codex-sync reset --local            # Also clear local sync state
+  codex-sync reset --remote --local   # Full reset (nuclear option)`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			reader := bufio.NewReader(os.Stdin)
 
 			fmt.Println()
-			printWarning("This will reset claude-sync:")
+			printWarning("This will reset codex-sync:")
 			fmt.Println()
 
 			if clearRemote {
@@ -1803,7 +1803,7 @@ Examples:
 			fmt.Println()
 			printSuccess("Reset complete!")
 			fmt.Println()
-			printInfo("Run 'claude-sync init' to set up again with a new passphrase.")
+			printInfo("Run 'codex-sync init' to set up again with a new passphrase.")
 			fmt.Println()
 
 			return nil
@@ -1925,7 +1925,7 @@ device's migrate run and reported as "left for other devices".`,
 				fmt.Printf("%s✓%s Migration complete: %s\n", colorGreen, colorReset, strings.Join(parts, ", "))
 
 				if len(result.Foreign) > 0 {
-					fmt.Printf("\n%sRun 'claude-sync migrate' on your other devices to convert the remaining keys.%s\n", colorDim, colorReset)
+					fmt.Printf("\n%sRun 'codex-sync migrate' on your other devices to convert the remaining keys.%s\n", colorDim, colorReset)
 				}
 				if len(result.Errors) > 0 {
 					fmt.Printf("\n%sErrors:%s\n", colorYellow, colorReset)
@@ -1957,12 +1957,12 @@ func updateCmd() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "update",
-		Short: "Update claude-sync to the latest version",
+		Short: "Update codex-sync to the latest version",
 		Long: `Check for updates and automatically download the latest version.
 
 Examples:
-  claude-sync update          # Update to latest version
-  claude-sync update --check  # Only check for updates, don't install`,
+  codex-sync update          # Update to latest version
+  codex-sync update --check  # Only check for updates, don't install`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			fmt.Printf("%s⋯%s Checking for updates...\n", colorDim, colorReset)
 
@@ -1992,7 +1992,7 @@ Examples:
 				colorGreen, latestVersion, colorReset)
 
 			if checkOnly {
-				fmt.Printf("\n%sRun 'claude-sync update' to install%s\n", colorDim, colorReset)
+				fmt.Printf("\n%sRun 'codex-sync update' to install%s\n", colorDim, colorReset)
 				return nil
 			}
 
@@ -2040,7 +2040,7 @@ Examples:
 			}
 
 			fmt.Printf("%s✓%s Updated to v%s\n", colorGreen, colorReset, latestVersion)
-			fmt.Printf("\n%sRestart claude-sync to use the new version%s\n", colorDim, colorReset)
+			fmt.Printf("\n%sRestart codex-sync to use the new version%s\n", colorDim, colorReset)
 
 			return nil
 		},
@@ -2052,14 +2052,14 @@ Examples:
 }
 
 func getLatestRelease() (*GitHubRelease, error) {
-	url := "https://api.github.com/repos/tawanorg/claude-sync/releases/latest"
+	url := "https://api.github.com/repos/tawanorg/codex-sync/releases/latest"
 
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
 		return nil, err
 	}
 	req.Header.Set("Accept", "application/vnd.github.v3+json")
-	req.Header.Set("User-Agent", "claude-sync/"+version)
+	req.Header.Set("User-Agent", "codex-sync/"+version)
 
 	client := &http.Client{Timeout: 30 * time.Second}
 	resp, err := client.Do(req)
@@ -2356,7 +2356,7 @@ func handleFirstPullWithExistingFiles(ctx context.Context, syncer *sync.Syncer, 
 	// If dry-run, stop here
 	if dryRun {
 		fmt.Printf("%sDry run complete. No changes were made.%s\n", colorDim, colorReset)
-		fmt.Printf("%sRun 'claude-sync pull' to apply changes, or 'claude-sync pull --force' to skip this prompt.%s\n", colorDim, colorReset)
+		fmt.Printf("%sRun 'codex-sync pull' to apply changes, or 'codex-sync pull --force' to skip this prompt.%s\n", colorDim, colorReset)
 		return nil
 	}
 
@@ -2501,7 +2501,7 @@ func showPullPreview(ctx context.Context, syncer *sync.Syncer) error {
 		len(preview.WouldConflict),
 		len(preview.WouldKeep))
 	fmt.Println()
-	fmt.Printf("%sRun 'claude-sync pull' to apply these changes.%s\n", colorDim, colorReset)
+	fmt.Printf("%sRun 'codex-sync pull' to apply these changes.%s\n", colorDim, colorReset)
 
 	return nil
 }
@@ -2572,7 +2572,7 @@ func executePull(ctx context.Context, syncer *sync.Syncer) error {
 					fmt.Printf("  %s•%s %s\n", colorYellow, colorReset, c)
 				}
 				fmt.Printf("\n%sLocal versions kept. Remote saved as .conflict files.%s\n", colorDim, colorReset)
-				fmt.Printf("%sRun '%sclaude-sync conflicts%s%s' to review and resolve.%s\n", colorDim, colorCyan, colorReset, colorDim, colorReset)
+				fmt.Printf("%sRun '%scodex-sync conflicts%s%s' to review and resolve.%s\n", colorDim, colorCyan, colorReset, colorDim, colorReset)
 			}
 
 			if len(result.Errors) > 0 {
@@ -2593,11 +2593,11 @@ func changelogCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "changelog",
 		Short: "Show release history and changelog",
-		Long: `Display the release history of claude-sync with version notes.
+		Long: `Display the release history of codex-sync with version notes.
 
 Examples:
-  claude-sync changelog          # Show recent releases
-  claude-sync changelog --limit 5 # Show last 5 releases`,
+  codex-sync changelog          # Show recent releases
+  codex-sync changelog --limit 5 # Show last 5 releases`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			fmt.Printf("%s⋯%s Fetching releases...\n\n", colorDim, colorReset)
 
@@ -2649,7 +2649,7 @@ Examples:
 			}
 
 			fmt.Println()
-			fmt.Printf("%sView all releases: %shttps://github.com/tawanorg/claude-sync/releases%s\n", colorDim, colorCyan, colorReset)
+			fmt.Printf("%sView all releases: %shttps://github.com/d-jiao/codex-sync/releases%s\n", colorDim, colorCyan, colorReset)
 			fmt.Println()
 
 			return nil
@@ -2674,14 +2674,14 @@ type GitHubReleaseWithBody struct {
 }
 
 func getAllReleases(limit int) ([]GitHubReleaseWithBody, error) {
-	url := fmt.Sprintf("https://api.github.com/repos/tawanorg/claude-sync/releases?per_page=%d", limit)
+	url := fmt.Sprintf("https://api.github.com/repos/tawanorg/codex-sync/releases?per_page=%d", limit)
 
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
 		return nil, err
 	}
 	req.Header.Set("Accept", "application/vnd.github.v3+json")
-	req.Header.Set("User-Agent", "claude-sync/"+version)
+	req.Header.Set("User-Agent", "codex-sync/"+version)
 
 	client := &http.Client{Timeout: 30 * time.Second}
 	resp, err := client.Do(req)
@@ -2998,7 +2998,7 @@ func autoCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "auto",
 		Short: "Manage auto-sync hooks for Claude Code",
-		Long: `Install or remove claude-sync hooks that automatically pull on session start
+		Long: `Install or remove codex-sync hooks that automatically pull on session start
 and push on session end. Hooks are stored in ~/.claude/settings.json.`,
 	}
 
@@ -3018,8 +3018,8 @@ func autoEnableCmd() *cobra.Command {
 		Use:   "enable",
 		Short: "Install auto-sync hooks into Claude Code",
 		Long: `Adds hooks to ~/.claude/settings.json:
-  - SessionStart: runs "claude-sync pull -q" when a session begins
-  - Stop: runs "claude-sync push -q" when a session ends
+  - SessionStart: runs "codex-sync pull -q" when a session begins
+  - Stop: runs "codex-sync push -q" when a session ends
 
 Existing hooks are preserved. This command is idempotent.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -3071,7 +3071,7 @@ func autoDisableCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "disable",
 		Short: "Remove auto-sync hooks from Claude Code",
-		Long: `Removes claude-sync hooks from ~/.claude/settings.json.
+		Long: `Removes codex-sync hooks from ~/.claude/settings.json.
 Other hooks are preserved. This command is idempotent.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			path := claudesettings.SettingsPath("")
@@ -3136,7 +3136,7 @@ func autoStatusCmd() *cobra.Command {
 				}
 			} else {
 				fmt.Printf("%s⋯%s Auto-sync: %snot installed%s\n", colorDim, colorReset, colorDim, colorReset)
-				fmt.Printf("    Run '%sclaude-sync auto enable%s' to install hooks\n", colorCyan, colorReset)
+				fmt.Printf("    Run '%scodex-sync auto enable%s' to install hooks\n", colorCyan, colorReset)
 			}
 
 			return nil

@@ -92,7 +92,7 @@ func TestCompareVersions(t *testing.T) {
 
 func TestGetBinaryName(t *testing.T) {
 	result := GetBinaryName("1.0.0")
-	expected := "claude-sync-" + runtime.GOOS + "-" + runtime.GOARCH
+	expected := "codex-sync-" + runtime.GOOS + "-" + runtime.GOARCH
 	if runtime.GOOS == "windows" {
 		expected += ".exe"
 	}
