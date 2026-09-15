@@ -1,3 +1,8 @@
+> **codex-sync note (2026-09-15):** this audit was inherited from claude-sync at
+> commit 49420ef. The crypto and storage design is unchanged except the Argon2
+> salt constant, which is `sha256("codex-sync-v1")` in this fork (domain
+> separation from claude-sync). It must remain fixed.
+
 # Security Audit Report: claude-sync
 
 **Date:** 2026-03-08
