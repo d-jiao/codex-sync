@@ -1,7 +1,0 @@
-{
-  "name": "claude-sync",
-  "description": "Sync Claude Code sessions across devices with encrypted cloud storage",
-  "author": {
-    "name": "tawanorg"
-  }
-}
