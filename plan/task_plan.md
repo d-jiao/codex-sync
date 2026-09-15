@@ -32,7 +32,7 @@ work continues on either machine — what claude-sync already does for `~/.claud
   dropped in after the DB exists are discovered immediately (no watermark gating).
   Gaps: thread names (DB-only at runtime, durable in `session_index.jsonl`) and
   `config.toml` provider dependence. Evidence in `plan/notes.md` → "Spike results".
-- [ ] Phase 2: Design spec → `docs/specs/2026-09-15-codex-sync-design.md` (repo
+- [x] Phase 2: Design spec → `docs/specs/2026-09-15-codex-sync-design.md` (repo
   convention: `docs/specs/`). Cover: base dir `~/.codex`; Codex path profile + default
   excludes; bucket/namespace; `${HOME}` rewriting of `cwd` in rollout JSONL and
   `session_index.jsonl`; gate or remove Claude-only modules; SQLite policy (from spike);
