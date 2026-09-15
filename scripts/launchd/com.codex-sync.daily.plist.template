@@ -8,8 +8,9 @@
   <array>
     <string>/bin/sh</string>
     <string>-c</string>
-    <string>__BIN__ pull -q &amp;&amp; __BIN__ push -q</string>
+    <string>"__BIN__" pull -q &amp;&amp; "__BIN__" push -q</string>
   </array>
+  __ENV__
   <key>StartCalendarInterval</key>
   <dict>
     <key>Hour</key>

@@ -3,11 +3,16 @@
 
 Lists threads through the app-server protocol of a Codex engine binary,
 using every model provider defined in the source home's config.toml so the
-comparison is not narrowed to the current provider. Nothing in either home is
-modified beyond what the engine itself writes on startup.
+comparison is not narrowed to the current provider.
+
+Run it against COPIES (or APFS clones) of the homes, never the live ~/.codex:
+the engine writes state (databases, logs, locks) into whichever home it is
+given, and a stray write into the live home is not something this check can
+undo.
 
 Usage:
-  codex_listing_check.py --source ~/.codex --synced /path/to/other/home \
+  codex_listing_check.py --source /path/to/copy-of-home \
+      --synced /path/to/copy-of-other-home \
       [--codex-bin /Applications/ChatGPT.app/Contents/Resources/codex]
 """
 import argparse, json, os, queue, re, subprocess, sys, threading, time
@@ -30,8 +35,12 @@ def providers(home):
 
 def list_threads(codex_bin, home, provs):
     env = dict(os.environ, CODEX_HOME=home)
-    p = subprocess.Popen([codex_bin, "app-server", "--stdio"], stdin=subprocess.PIPE,
-                         stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, env=env, text=True)
+    try:
+        p = subprocess.Popen([codex_bin, "app-server", "--stdio"], stdin=subprocess.PIPE,
+                             stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, env=env, text=True)
+    except FileNotFoundError:
+        print(f"codex engine binary not found: {codex_bin} (use --codex-bin or CODEX_BIN)", file=sys.stderr)
+        sys.exit(2)
 
     lines = queue.Queue()
 
@@ -92,8 +101,8 @@ def list_threads(codex_bin, home, provs):
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--source", required=True, help="Codex home the data was pushed from")
-    ap.add_argument("--synced", required=True, help="Codex home that pulled it")
+    ap.add_argument("--source", required=True, help="copy of the Codex home the data was pushed from")
+    ap.add_argument("--synced", required=True, help="copy of the Codex home that pulled it")
     ap.add_argument("--codex-bin", default=os.environ.get("CODEX_BIN", "codex"), help="engine binary (default: codex on PATH or $CODEX_BIN)")
     a = ap.parse_args()
 

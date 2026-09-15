@@ -115,7 +115,11 @@ transcripts) is removed; a rollout-based rebuild can be added later if needed.
 
 ## 7. Deletions, moves, conflicts
 
-- Push: unchanged — files removed locally since the last sync are deleted remotely.
+- Push: files removed locally since the last sync are deleted remotely. A modified
+  file that still has a live `<path>.conflict.*` sidecar next to it is **not**
+  uploaded: push reports `unresolved conflict for <path>; run 'codex-sync conflicts'`
+  and fails its exit code, while every other file still uploads. Resolving the
+  conflict removes the sidecar, and the next push publishes the kept version.
 - Pull (new): a file recorded in state but absent from the remote listing is removed
   locally **only if** its current hash equals the state hash (unchanged since the last
   sync); otherwise it is kept in place and listed in the pull summary (no sidecar).
@@ -127,6 +131,10 @@ transcripts) is removed; a rollout-based rebuild can be added later if needed.
 - Conflicts: unchanged — local kept, remote saved as `<path>.conflict.<timestamp>`,
   resolved with `codex-sync conflicts`. Sidecar names do not end in `.jsonl`, so Codex's
   rollout scanner is expected to ignore them (verify in Phase 5, §12).
+- Sidecars are local artifacts only: `*.conflict.*` is a hard exclude, so they are never
+  uploaded, never tracked in state (the pull that writes one drops its entry), and never
+  moved to the trash as a "vanished remote file"; they exist until `codex-sync conflicts`
+  resolves them.
 
 ## 8. Thread names
 

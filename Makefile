@@ -15,8 +15,6 @@ all: build
 build:
 	$(GO) build $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_NAME) ./cmd/codex-sync
 
-# Note: old go install target replaced by new install target below (after setup-hooks)
-
 # Clean build artifacts
 clean:
 	rm -rf $(BUILD_DIR)
@@ -66,6 +64,9 @@ setup-hooks:
 INSTALL_DIR ?= $(HOME)/.local/bin
 LAUNCHD_LABEL = com.codex-sync.daily
 LAUNCHD_PLIST = $(HOME)/Library/LaunchAgents/$(LAUNCHD_LABEL).plist
+# launchd jobs do not inherit the shell environment: bake CODEX_HOME into the
+# agent when it is set at install time, so the job syncs the same home.
+LAUNCHD_ENV = $(if $(CODEX_HOME),<key>EnvironmentVariables</key><dict><key>CODEX_HOME</key><string>$(CODEX_HOME)</string></dict>,)
 
 # Install the binary for the current user
 install: build
@@ -73,15 +74,17 @@ install: build
 	install -m 755 $(BUILD_DIR)/$(BINARY_NAME) $(INSTALL_DIR)/$(BINARY_NAME)
 	@echo "Installed $(INSTALL_DIR)/$(BINARY_NAME)"
 
-# Install the daily launchd agent (pull then push at 03:00 and at login)
+# Install the daily launchd agent (pull then push: immediately on install,
+# daily at 03:00, and at login). Honors CODEX_HOME if set when running this.
 install-launchd: install
 	mkdir -p $(HOME)/Library/LaunchAgents $(HOME)/Library/Logs
 	sed -e 's#__BIN__#$(INSTALL_DIR)/$(BINARY_NAME)#g' -e 's#__HOME__#$(HOME)#g' \
+		-e 's#__ENV__#$(LAUNCHD_ENV)#' \
 		scripts/launchd/$(LAUNCHD_LABEL).plist.template > $(LAUNCHD_PLIST)
 	plutil -lint $(LAUNCHD_PLIST)
 	launchctl bootout gui/$$(id -u) $(LAUNCHD_PLIST) 2>/dev/null || true
 	launchctl bootstrap gui/$$(id -u) $(LAUNCHD_PLIST)
-	@echo "Installed $(LAUNCHD_LABEL): daily at 03:00 and at login; log: ~/Library/Logs/codex-sync.log"
+	@echo "Installed $(LAUNCHD_LABEL): runs now, daily at 03:00 and at login; log: ~/Library/Logs/codex-sync.log"
 
 uninstall-launchd:
 	launchctl bootout gui/$$(id -u) $(LAUNCHD_PLIST) 2>/dev/null || true

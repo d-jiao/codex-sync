@@ -15,7 +15,7 @@ WebDAV).
     codex-sync init                     # provider, bucket, passphrase, scope
     codex-sync push                     # first machine
     codex-sync init && codex-sync pull  # second machine, same passphrase
-    make install-launchd                # daily pull+push at 03:00 and at login
+    make install-launchd                # pull+push now, daily at 03:00 and at login
 
 Keep both Macs on the same Codex version: an older engine cannot list threads
 written by a newer one.
@@ -53,12 +53,22 @@ the current scope is rejected rather than silently widening it.
 
 - New and changed remote files are downloaded; a file changed on both sides is
   kept locally and the remote copy saved as `<file>.conflict.<timestamp>`
-  (`codex-sync conflicts` resolves them).
+  (`codex-sync conflicts` resolves them). Sidecars are local only: they are
+  never uploaded, tracked or removed by a later pull.
 - `session_index.jsonl` and `history.jsonl` are unioned with your local copy.
 - A file that vanished from the remote (deleted or archived on the other Mac) is
   moved to `~/.codex-sync/trash/<timestamp>/` when unchanged locally; changed
   files stay. `codex-sync pull --no-delete` disables this; `--dry-run` previews it.
+  The trash grows with every removal and nothing references it, so old batches
+  are safe to delete.
 - An empty remote never removes anything.
+
+## How push behaves
+
+Push uploads files whose content changed since the last sync and deletes the
+remote copies of files removed locally. A file that still has a live
+`.conflict.*` sidecar is skipped and reported as an error until you resolve it
+with `codex-sync conflicts`; the sidecar itself is never uploaded.
 
 ## Limitations (v1)
 
@@ -195,7 +205,7 @@ codex-sync status       # Show pending local changes
 codex-sync diff         # Show differences between local and remote
 codex-sync conflicts    # List and resolve conflicts
 codex-sync paths        # Manage sync paths and exclude filters
-codex-sync reset        # Reset configuration (forgot passphrase)
+codex-sync reset        # Remove local config, key and sync state (keeps trash/)
 codex-sync update       # Update to latest version (verifies release checksums)
 codex-sync changelog    # Show release history
 codex-sync --help       # Show all commands
@@ -237,6 +247,21 @@ codex-sync push -q     # No output (for scripts)
 codex-sync pull -q
 ```
 
+Errors are still printed to stderr in quiet mode, and a push or pull with any
+failed file exits non-zero, so `pull -q && push -q` stops at the first problem.
+
+### Reset
+
+```bash
+codex-sync reset            # Remove ~/.codex-sync/config.yaml, age-key.txt and state.json
+codex-sync reset --remote   # Also delete every file in the bucket
+codex-sync reset --local    # Kept for compatibility: a plain reset already clears the sync state
+```
+
+`reset` never touches `~/.codex` and never touches `~/.codex-sync/trash/`, so
+files an earlier pull removed stay recoverable. Run `codex-sync init` afterwards
+to set up again.
+
 ### Check for Updates
 
 ```bash
@@ -263,9 +288,15 @@ make uninstall-launchd   # removes it
 
 This installs a per-user launchd agent
 (`~/Library/LaunchAgents/com.codex-sync.daily.plist`) that runs
-`codex-sync pull -q && codex-sync push -q` once daily at 03:00 and once at
-login. Output goes to `~/Library/Logs/codex-sync.log`. macOS only; there is no
-built-in scheduler in the CLI itself.
+`codex-sync pull -q && codex-sync push -q`. The job runs immediately when
+installed (`RunAtLoad`), then daily at 03:00 and at every login. Output goes to
+`~/Library/Logs/codex-sync.log`; a failed file makes the job exit non-zero, and
+the log says which file and why.
+
+launchd jobs do not see your shell environment. If you use a custom Codex home,
+run `CODEX_HOME=/path/to/home make install-launchd` — the value is baked into
+the agent at install time (re-run the target to change it). macOS only; there
+is no built-in scheduler in the CLI itself.
 
 ## Exclude Patterns
 
@@ -286,12 +317,19 @@ Patterns use glob syntax and are matched against paths relative to `~/.codex`.
 by a real Codex engine binary (the `app-server` protocol) across two
 `$CODEX_HOME` directories — a source home and a synced copy — across every
 model provider configured in the source home. It needs a local Codex engine
-binary, is run manually, and is not part of `make check`:
+binary, is run manually, and is not part of `make check`.
+
+Run it against copies (or APFS clones) of the homes, never the live `~/.codex`:
+the engine writes state into whichever home it is given.
 
 ```bash
-integration/codex_listing_check.py --source ~/.codex --synced /path/to/other/home \
+integration/codex_listing_check.py --source /path/to/copy-of-home \
+    --synced /path/to/copy-of-other-home \
     [--codex-bin /Applications/ChatGPT.app/Contents/Resources/codex]
 ```
+
+It exits 2 with `codex engine binary not found` when the engine cannot be
+started (set `--codex-bin` or `CODEX_BIN`).
 
 ## Passphrase Issues
 
@@ -314,7 +352,7 @@ The passphrase is **never stored**. If you forget it:
 2. Reset and start fresh:
 
 ```bash
-codex-sync reset --remote   # Delete remote files and local config
+codex-sync reset --remote   # Delete remote files and local config/key/state (trash/ kept)
 codex-sync init             # Set up again with new passphrase
 codex-sync push             # Re-upload from this device
 ```
