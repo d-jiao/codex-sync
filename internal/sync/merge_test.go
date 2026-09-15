@@ -106,3 +106,14 @@ func TestWriteFileAtomicCreatesParentAndSetsPerm(t *testing.T) {
 		t.Errorf("temp file left behind: %v", entries)
 	}
 }
+
+func TestMergeHistoryKeepsUnparsableLinesAtEnd(t *testing.T) {
+	h := `{"session_id":"s","ts":1700000001,"text":"first"}` + "\n"
+	got, err := MergeJSONL(HistoryFile, []byte("garbage\n"+h), []byte("garbage\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := h + "garbage\n"; string(got) != want {
+		t.Errorf("merge =\n%s\nwant\n%s", got, want)
+	}
+}

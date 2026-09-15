@@ -152,15 +152,24 @@ func mergeHistory(local, remote []byte) []byte {
 	}
 	var entries []entry
 	seen := map[string]bool{}
+	var other [][]byte
+	seenOther := map[string]bool{}
 
 	for _, l := range append(splitJSONL(local), splitJSONL(remote)...) {
+		if l.obj == nil {
+			if key := string(l.raw); !seenOther[key] {
+				seenOther[key] = true
+				other = append(other, l.raw)
+			}
+			continue
+		}
 		key := string(l.raw)
 		if seen[key] {
 			continue
 		}
 		seen[key] = true
 		e := entry{raw: l.raw, seq: len(entries)}
-		if l.obj != nil && l.obj["ts"] != nil {
+		if l.obj["ts"] != nil {
 			if v, err := strconv.ParseFloat(strings.Trim(string(l.obj["ts"]), `"`), 64); err == nil {
 				e.ts, e.hasTS = v, true
 			}
@@ -179,10 +188,11 @@ func mergeHistory(local, remote []byte) []byte {
 		return a.seq < b.seq
 	})
 
-	out := make([][]byte, len(entries))
-	for i, e := range entries {
-		out[i] = e.raw
+	out := make([][]byte, 0, len(entries)+len(other))
+	for _, e := range entries {
+		out = append(out, e.raw)
 	}
+	out = append(out, other...)
 	return joinJSONL(out)
 }
 
