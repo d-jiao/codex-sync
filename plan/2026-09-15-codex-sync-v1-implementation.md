@@ -216,7 +216,7 @@ Expected: no output. And `grep -rniE 'claudesettings|MCPBaseline|mcp_sync|rebuil
 - [ ] **Step 5: Commit**
 
 ```bash
-git add -A && git commit -m "refactor: remove Claude-specific MCP, hooks, migrate and history-rebuild code" -m "Codex keeps MCP servers in config.toml (synced as a file), has no settings.json hooks, and its history is merged rather than rebuilt (spec §6, §10)." -m "Co-Authored-By: Claude <noreply@anthropic.com>"
+git add -A && git commit -m "refactor: remove Claude-only MCP, hooks, migrate and history code" -m "Codex keeps MCP servers in config.toml (synced as a file), has no settings.json hooks, and its history is merged rather than rebuilt (spec §6, §10)." -m "Co-Authored-By: Claude <noreply@anthropic.com>"
 ```
 
 ---
@@ -577,7 +577,7 @@ Expected: `All checks passed!`
 - [ ] **Step 9: Commit**
 
 ```bash
-git add -A && git commit -m "feat(config): define the Codex sync profile with hard excludes and protected paths" -m "Files only — every SQLite database is derived or machine-local; auth.json and installation_id never leave or enter the machine (spec §5)." -m "Co-Authored-By: Claude <noreply@anthropic.com>"
+git add -A && git commit -m "feat(config): Codex sync profile, hard excludes and protected paths" -m "Files only — every SQLite database is derived or machine-local; auth.json and installation_id never leave or enter the machine (spec §5)." -m "Co-Authored-By: Claude <noreply@anthropic.com>"
 ```
 
 ---
@@ -1640,7 +1640,7 @@ Expected: `All checks passed!`
 - [ ] **Step 6: Commit**
 
 ```bash
-git add -A && git commit -m "feat(sync): move files that vanished remotely to a trash directory on pull" -m "codex archive moves rollouts between directories; without pull-side removal the other machine keeps the thread twice. Only unchanged files are removed, never unlinked, and an empty remote removes nothing (spec §7)." -m "Co-Authored-By: Claude <noreply@anthropic.com>"
+git add -A && git commit -m "feat(sync): move files that vanished remotely to a trash directory" -m "codex archive moves rollouts between directories; without pull-side removal the other machine keeps the thread twice. Only unchanged files are removed, never unlinked, and an empty remote removes nothing (spec §7)." -m "Co-Authored-By: Claude <noreply@anthropic.com>"
 ```
 
 ---
@@ -1758,7 +1758,7 @@ Expected: checks pass; help shows Codex wording, no `~/.claude`, and the `--no-d
 - [ ] **Step 6: Commit**
 
 ```bash
-git add -A && git commit -m "feat(cli): Codex wording, full scope by default, releases from this repository" -m "Co-Authored-By: Claude <noreply@anthropic.com>"
+git add -A && git commit -m "feat(cli): Codex wording, full scope default, own release URLs" -m "Co-Authored-By: Claude <noreply@anthropic.com>"
 ```
 
 ---
@@ -1977,7 +1977,7 @@ Expected: `OK: listings match` (adjust `--codex-bin` to any Codex engine ≥ the
 - [ ] **Step 3: Commit**
 
 ```bash
-git rm -q plan/spike/list_threads.py && git add integration/codex_listing_check.py && git commit -m "test(integration): acceptance script comparing thread listings of two Codex homes" -m "Co-Authored-By: Claude <noreply@anthropic.com>"
+git rm -q plan/spike/list_threads.py && git add integration/codex_listing_check.py && git commit -m "test(integration): script comparing two Codex homes' thread listings" -m "Co-Authored-By: Claude <noreply@anthropic.com>"
 ```
 
 ---
