@@ -70,8 +70,8 @@ type Config struct {
 	//     ~/Projects: WORK
 	PathMap map[string]string `yaml:"path_map,omitempty"`
 
-	// ClaudeDirOverride allows overriding the default ~/.claude path (for testing)
-	ClaudeDirOverride string `yaml:"-"`
+	// BaseDirOverride overrides the resolved Codex home (for testing)
+	BaseDirOverride string `yaml:"-"`
 
 	// StateDirOverride allows overriding the state file directory (for testing)
 	StateDirOverride string `yaml:"-"`
@@ -147,18 +147,38 @@ func AgeKeyFilePath() string {
 	return filepath.Join(ConfigDirPath(), AgeKeyFile)
 }
 
-func ClaudeDir() string {
-	path, _ := ClaudeDirE()
+const (
+	// BaseDirEnv is Codex's own override for its home directory; codex-sync honors it.
+	BaseDirEnv = "CODEX_HOME"
+	// DefaultBaseDirName is the directory under $HOME that Codex uses by default.
+	DefaultBaseDirName = ".codex"
+)
+
+// BaseDir returns the Codex home directory ($CODEX_HOME, else ~/.codex).
+func BaseDir() string {
+	path, _ := BaseDirE()
 	return path
 }
 
-// ClaudeDirE returns the Claude directory path or an error if home dir is unavailable.
-func ClaudeDirE() (string, error) {
+// BaseDirE returns the Codex home directory or an error if it cannot be
+// determined. $CODEX_HOME wins when set (a leading ~ is expanded); otherwise
+// ~/.codex, mirroring Codex's own resolution.
+func BaseDirE() (string, error) {
+	if custom := strings.TrimSpace(os.Getenv(BaseDirEnv)); custom != "" {
+		if strings.HasPrefix(custom, "~") {
+			home, err := os.UserHomeDir()
+			if err != nil {
+				return "", ErrNoHomeDir
+			}
+			custom = filepath.Join(home, custom[1:])
+		}
+		return filepath.Clean(custom), nil
+	}
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return "", ErrNoHomeDir
 	}
-	return filepath.Join(home, ".claude"), nil
+	return filepath.Join(home, DefaultBaseDirName), nil
 }
 
 // ClaudeJSONPath returns the path to ~/.claude.json where global MCP servers are configured.

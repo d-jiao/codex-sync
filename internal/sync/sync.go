@@ -97,10 +97,10 @@ func NewSyncer(cfg *config.Config, quiet bool) (*Syncer, error) {
 		return nil, fmt.Errorf("failed to load state: %w", err)
 	}
 
-	// Use overridden claude dir if provided, otherwise use default
-	claudeDir := config.ClaudeDir()
-	if cfg.ClaudeDirOverride != "" {
-		claudeDir = cfg.ClaudeDirOverride
+	// Use overridden base dir if provided, otherwise use default
+	claudeDir := config.BaseDir()
+	if cfg.BaseDirOverride != "" {
+		claudeDir = cfg.BaseDirOverride
 	}
 
 	homeDir, _ := os.UserHomeDir()

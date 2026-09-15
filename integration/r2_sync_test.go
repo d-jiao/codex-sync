@@ -519,10 +519,10 @@ func setupTestConfig(t *testing.T, baseDir, passphrase string) *config.Config {
 
 	// Create a custom config that uses isolated paths
 	cfg := &config.Config{
-		Storage:           storageCfg,
-		EncryptionKey:     keyPath,
-		ClaudeDirOverride: claudeDir,
-		StateDirOverride:  configDir,
+		Storage:          storageCfg,
+		EncryptionKey:    keyPath,
+		BaseDirOverride:  claudeDir,
+		StateDirOverride: configDir,
 	}
 
 	return cfg

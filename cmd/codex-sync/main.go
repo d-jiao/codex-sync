@@ -1441,7 +1441,7 @@ Examples:
   codex-sync conflicts --keep local # Keep all local versions
   codex-sync conflicts --keep remote # Keep all remote versions`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			claudeDir := config.ClaudeDir()
+			claudeDir := config.BaseDir()
 
 			// Find all .conflict files
 			conflicts, err := findConflicts(claudeDir)
@@ -1841,7 +1841,7 @@ history.jsonl.bak.`,
 // runHistoryRebuild rebuilds history.jsonl and reports how many prompts were
 // recovered from session files.
 func runHistoryRebuild() error {
-	claudeDir, err := config.ClaudeDirE()
+	claudeDir, err := config.BaseDirE()
 	if err != nil {
 		return err
 	}
@@ -2288,7 +2288,7 @@ func clearRemoteStorage(ctx context.Context, store storage.Storage) error {
 
 // hasExistingClaudeFiles checks if ~/.claude has any files that would be synced
 func hasExistingClaudeFiles(cfg *config.Config) (bool, error) {
-	claudeDir := config.ClaudeDir()
+	claudeDir := config.BaseDir()
 	if _, err := os.Stat(claudeDir); os.IsNotExist(err) {
 		return false, nil
 	}
@@ -2399,7 +2399,7 @@ func handleFirstPullWithExistingFiles(ctx context.Context, syncer *sync.Syncer, 
 
 // createBackup creates a backup of the current ~/.claude directory
 func createBackup(syncPaths []string) (string, error) {
-	claudeDir := config.ClaudeDir()
+	claudeDir := config.BaseDir()
 	timestamp := time.Now().Format("20060102-150405")
 	backupDir := claudeDir + ".backup." + timestamp
 
@@ -3187,7 +3187,7 @@ func runPathsList() error {
 		return err
 	}
 
-	mgr := paths.NewManager(cfg.SyncPaths, cfg.Exclude, config.ClaudeDir(), cfg.Scope)
+	mgr := paths.NewManager(cfg.SyncPaths, cfg.Exclude, config.BaseDir(), cfg.Scope)
 	status := mgr.Status()
 
 	source := "default"
@@ -3258,7 +3258,7 @@ conflicting exclude is automatically removed.`,
 				return err
 			}
 
-			mgr := paths.NewManager(cfg.SyncPaths, cfg.Exclude, config.ClaudeDir(), cfg.Scope)
+			mgr := paths.NewManager(cfg.SyncPaths, cfg.Exclude, config.BaseDir(), cfg.Scope)
 			result := mgr.Add(args[0])
 
 			if result.Invalid != nil {
@@ -3313,7 +3313,7 @@ Custom paths are simply removed from the list.`,
 				return err
 			}
 
-			mgr := paths.NewManager(cfg.SyncPaths, cfg.Exclude, config.ClaudeDir(), cfg.Scope)
+			mgr := paths.NewManager(cfg.SyncPaths, cfg.Exclude, config.BaseDir(), cfg.Scope)
 
 			if !mgr.HasPath(args[0]) {
 				fmt.Printf("%s!%s %s is not in the sync list\n", colorYellow, colorReset, args[0])
@@ -3367,7 +3367,7 @@ Glob syntax: dir/*, dir/**, **/*.ext`,
 				return err
 			}
 
-			mgr := paths.NewManager(cfg.SyncPaths, cfg.Exclude, config.ClaudeDir(), cfg.Scope)
+			mgr := paths.NewManager(cfg.SyncPaths, cfg.Exclude, config.BaseDir(), cfg.Scope)
 			result := mgr.AddExclude(args[0])
 
 			if result.IsSyncPath {
@@ -3403,7 +3403,7 @@ func pathsUnexcludeCmd() *cobra.Command {
 				return err
 			}
 
-			mgr := paths.NewManager(cfg.SyncPaths, cfg.Exclude, config.ClaudeDir(), cfg.Scope)
+			mgr := paths.NewManager(cfg.SyncPaths, cfg.Exclude, config.BaseDir(), cfg.Scope)
 			result := mgr.RemoveExclude(args[0])
 
 			if result.NotFound {

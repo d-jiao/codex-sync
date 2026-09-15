@@ -16,9 +16,9 @@ func TestCreateBackupSetsRestrictivePermissions(t *testing.T) {
 	tmpHome := t.TempDir()
 	t.Setenv("HOME", tmpHome)
 
-	// Populate ~/.claude with a file inside a syncable subdirectory so that
+	// Populate the Codex base dir with a file inside a syncable subdirectory so that
 	// createBackup also creates a nested directory we can stat.
-	claudeDir := filepath.Join(tmpHome, ".claude")
+	claudeDir := config.BaseDir()
 	agentsDir := filepath.Join(claudeDir, "agents")
 	if err := os.MkdirAll(agentsDir, 0700); err != nil {
 		t.Fatalf("Failed to create agents dir: %v", err)

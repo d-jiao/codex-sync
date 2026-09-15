@@ -79,13 +79,13 @@ func TestAgeKeyFilePath(t *testing.T) {
 }
 
 func TestClaudeDir(t *testing.T) {
-	path := ClaudeDir()
+	path := BaseDir()
 	if path == "" {
-		t.Fatal("ClaudeDir should not return empty string")
+		t.Fatal("BaseDir should not return empty string")
 	}
 
-	if !strings.HasSuffix(path, ".claude") {
-		t.Errorf("ClaudeDir should end with '.claude', got '%s'", path)
+	if !strings.HasSuffix(path, ".codex") {
+		t.Errorf("BaseDir should end with '.codex', got '%s'", path)
 	}
 }
 
@@ -575,4 +575,49 @@ func TestSetMCPSync(t *testing.T) {
 
 func boolPtr(b bool) *bool {
 	return &b
+}
+
+func TestBaseDirHonorsCodexHome(t *testing.T) {
+	custom := t.TempDir()
+	t.Setenv("CODEX_HOME", custom)
+	got, err := BaseDirE()
+	if err != nil {
+		t.Fatalf("BaseDirE: %v", err)
+	}
+	if got != custom {
+		t.Errorf("BaseDirE() = %q, want %q", got, custom)
+	}
+	if BaseDir() != custom {
+		t.Errorf("BaseDir() = %q, want %q", BaseDir(), custom)
+	}
+}
+
+func TestBaseDirExpandsTilde(t *testing.T) {
+	t.Setenv("CODEX_HOME", "~/custom-codex")
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Skip("no home directory")
+	}
+	got, err := BaseDirE()
+	if err != nil {
+		t.Fatalf("BaseDirE: %v", err)
+	}
+	if want := filepath.Join(home, "custom-codex"); got != want {
+		t.Errorf("BaseDirE() = %q, want %q", got, want)
+	}
+}
+
+func TestBaseDirDefaultsToDotCodex(t *testing.T) {
+	t.Setenv("CODEX_HOME", "")
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Skip("no home directory")
+	}
+	got, err := BaseDirE()
+	if err != nil {
+		t.Fatalf("BaseDirE: %v", err)
+	}
+	if want := filepath.Join(home, ".codex"); got != want {
+		t.Errorf("BaseDirE() = %q, want %q", got, want)
+	}
 }

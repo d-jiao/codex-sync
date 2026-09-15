@@ -290,8 +290,8 @@ func TestConfigPaths(t *testing.T) {
 	if config.AgeKeyFilePath() == "" {
 		t.Error("AgeKeyFilePath should not be empty")
 	}
-	if config.ClaudeDir() == "" {
-		t.Error("ClaudeDir should not be empty")
+	if config.BaseDir() == "" {
+		t.Error("BaseDir should not be empty")
 	}
 }
 
