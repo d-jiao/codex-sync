@@ -98,3 +98,29 @@ work continues on either machine — what claude-sync already does for `~/.claud
 
 ## Status
 **Phase 5 next** — rollout per spec §12 (init on the first Mac, push, init + pull on the second, launchd on both).
+
+## Follow-ups after the whole-branch review (2026-09-15)
+
+Ordered by importance; none block the Phase 5 rollout, but #1 should land before relying on
+conflict resolution across machines.
+
+1. `conflicts --keep local` marks the local hash as uploaded, so the kept version is never
+   pushed and the other machine keeps its copy (pre-existing upstream behavior). Fix: do not
+   mark the file uploaded on keep-local, so the next push publishes it. Spec §7's sentence
+   "the next push publishes the kept version" is true only after this fix.
+2. Sidecars accumulate: every pull on a machine with an unresolved conflict writes another
+   `<path>.conflict.<ts>` (the original path's state is not advanced). Pre-existing; a
+   one-sidecar-per-conflict rule would keep the daily job tidy.
+3. Mass-removal guard: refuse (or require `--force`) when a pull would trash more than ~20%
+   of tracked files, so a wiped home on one machine cannot empty the other via the daily job.
+4. `findConflicts` walks the whole base dir including hard-excluded trees (`worktrees/`,
+   `packages/`); skip `config.IsHardExcluded` directories.
+5. `internal/sync/sync.go` is ~1100 lines (limit 800; 970 at the fork): pure-move split of
+   Codex-only helpers (`staleLocalFiles`/`moveToTrash` → `trash.go`, `mergeRemote` → `merge.go`,
+   `PreviewPull` → `preview.go`) without touching upstream-shared bodies (keeps cherry-picks clean).
+6. Preview summary omits merge/remove counts; `PreviewPull` drops path_map-unresolvable keys
+   that `Pull` reports; `downloadManifest` should use `fetchRemote` (keep soft-fail).
+7. Tests: `moveToTrash` copy fallback (inject the rename), same-home byte-identical `${HOME}`
+   round trip, `PreviewPull` on an empty remote, an upload-side `IsProtected` guard.
+8. `integration/r2_sync_test.go` (build-tag gated, real R2) still uses Claude-profile fixtures.
+9. Split `cmd/codex-sync/main.go` (~3000 lines) per command — unrelated churn, do it separately.
