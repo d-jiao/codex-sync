@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -52,6 +53,8 @@ type Syncer struct {
 	onProgress ProgressFunc
 	cfg        *config.Config
 	paths      *PathMapper
+	noDelete   bool   // pull --no-delete: never remove local files that vanished remotely
+	trashDir   string // where removed files are moved (config.TrashDirPath by default)
 }
 
 type SyncResult struct {
@@ -61,6 +64,8 @@ type SyncResult struct {
 	Deleted    []string
 	Conflicts  []string
 	Errors     []error
+	Removed    []string // moved to the trash directory: vanished remotely, unchanged locally
+	KeptLocal  []string // vanished remotely but modified locally: left in place
 }
 
 type ProgressEvent struct {
@@ -118,6 +123,7 @@ func NewSyncer(cfg *config.Config, quiet bool) (*Syncer, error) {
 		quiet:     quiet,
 		cfg:       cfg,
 		paths:     mapper,
+		trashDir:  config.TrashDirPath(),
 	}, nil
 }
 
@@ -133,12 +139,19 @@ func NewSyncerWith(cfg *config.Config, store storage.Storage, enc *crypto.Encryp
 		quiet:     quiet,
 		cfg:       cfg,
 		paths:     mapper,
+		trashDir:  config.TrashDirPath(),
 	}
 }
 
 func (s *Syncer) SetProgressFunc(fn ProgressFunc) {
 	s.onProgress = fn
 }
+
+// SetNoDelete disables pull-side removal of files that vanished from the remote.
+func (s *Syncer) SetNoDelete(v bool) { s.noDelete = v }
+
+// SetTrashDir overrides where removed files are moved (for testing).
+func (s *Syncer) SetTrashDir(dir string) { s.trashDir = dir }
 
 func (s *Syncer) progress(event ProgressEvent) {
 	if s.onProgress != nil {
@@ -419,6 +432,27 @@ func (s *Syncer) Pull(ctx context.Context) (*SyncResult, error) {
 
 	s.progress(ProgressEvent{Action: "download", Complete: true, Total: total})
 
+	// Files that vanished from the remote (deleted or moved on another machine)
+	// are moved to the trash when unchanged locally; never when this pull saw an
+	// empty remote (Pull returned early above).
+	if !s.noDelete {
+		removable, kept, err := s.staleLocalFiles(remoteFiles, localFiles)
+		if err != nil {
+			result.Errors = append(result.Errors, err)
+		} else {
+			batch := time.Now().Format("20060102-150405")
+			for _, relPath := range removable {
+				if err := s.moveToTrash(relPath, batch); err != nil {
+					result.Errors = append(result.Errors, fmt.Errorf("%s: %w", relPath, err))
+					continue
+				}
+				s.state.RemoveFile(relPath)
+				result.Removed = append(result.Removed, relPath)
+			}
+			result.KeptLocal = kept
+		}
+	}
+
 	s.state.LastPull = time.Now()
 	s.state.LastSync = time.Now()
 	if err := s.state.Save(); err != nil {
@@ -558,6 +592,62 @@ func (s *Syncer) handleConflict(ctx context.Context, relativePath string, remote
 	}
 
 	return nil
+}
+
+// staleLocalFiles lists tracked files that are present locally but gone from
+// the remote: removable when unchanged since the last sync, kept when modified
+// locally. Mergeable and protected paths are never candidates.
+func (s *Syncer) staleLocalFiles(remoteFiles map[string]storage.ObjectInfo, localFiles map[string]os.FileInfo) (removable, kept []string, err error) {
+	s.state.mu.Lock()
+	tracked := make([]string, 0, len(s.state.Files))
+	for p := range s.state.Files {
+		tracked = append(tracked, p)
+	}
+	s.state.mu.Unlock()
+	sort.Strings(tracked)
+
+	for _, relPath := range tracked {
+		if _, onRemote := remoteFiles[relPath]; onRemote {
+			continue
+		}
+		if _, onDisk := localFiles[relPath]; !onDisk {
+			continue
+		}
+		if IsMergeablePath(relPath) || config.IsProtected(relPath) {
+			continue
+		}
+		hash, err := HashFile(filepath.Join(s.claudeDir, relPath))
+		if err != nil {
+			return nil, nil, fmt.Errorf("failed to hash %s: %w", relPath, err)
+		}
+		if hash == s.state.GetFile(relPath).Hash {
+			removable = append(removable, relPath)
+		} else {
+			kept = append(kept, relPath)
+		}
+	}
+	return removable, kept, nil
+}
+
+// moveToTrash relocates a local file to <trashDir>/<batch>/<relPath>. A rename
+// that fails (different volume) falls back to copy-then-remove.
+func (s *Syncer) moveToTrash(relPath, batch string) error {
+	src := filepath.Join(s.claudeDir, relPath)
+	dst := filepath.Join(s.trashDir, batch, filepath.FromSlash(relPath))
+	if err := os.MkdirAll(filepath.Dir(dst), 0700); err != nil {
+		return fmt.Errorf("failed to create trash directory: %w", err)
+	}
+	if err := os.Rename(src, dst); err == nil {
+		return nil
+	}
+	data, err := os.ReadFile(src)
+	if err != nil {
+		return err
+	}
+	if err := os.WriteFile(dst, data, 0600); err != nil {
+		return err
+	}
+	return os.Remove(src)
 }
 
 // mergeRemote handles a mergeable file (see IsMergeablePath): the remote copy is
@@ -753,6 +843,8 @@ type PullPreview struct {
 	WouldConflict  []FilePreview // Files that would create a conflict
 	WouldMerge     []FilePreview // Shared index files that would be unioned with the local copy
 	LocalOnlyFiles []FilePreview // Files that exist only locally
+	WouldRemove    []FilePreview // Tracked files gone from the remote, unchanged locally: would move to trash
+	WouldKeepLocal []FilePreview // Tracked files gone from the remote but modified locally: would stay in place
 }
 
 // PreviewPull returns a preview of what would happen during a pull operation
@@ -837,6 +929,19 @@ func (s *Syncer) PreviewPull(ctx context.Context) (*PullPreview, error) {
 				LocalSize: localInfo.Size(),
 				LocalOnly: true,
 			})
+		}
+	}
+
+	if len(remoteObjects) > 0 && !s.noDelete {
+		removable, kept, err := s.staleLocalFiles(remoteFiles, localFiles)
+		if err != nil {
+			return nil, err
+		}
+		for _, p := range removable {
+			preview.WouldRemove = append(preview.WouldRemove, FilePreview{Path: p, LocalSize: localFiles[p].Size()})
+		}
+		for _, p := range kept {
+			preview.WouldKeepLocal = append(preview.WouldKeepLocal, FilePreview{Path: p, LocalSize: localFiles[p].Size()})
 		}
 	}
 

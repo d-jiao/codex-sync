@@ -16,6 +16,7 @@ const (
 	ConfigFile = "config.yaml"
 	StateFile  = "state.json"
 	AgeKeyFile = "age-key.txt"
+	TrashDir   = "trash"
 
 	// Sync scopes control which subset of ~/.claude is synced.
 	// ScopeFull (default) syncs everything in SyncPaths; ScopeSessions limits
@@ -176,6 +177,12 @@ func StateFilePath() string {
 
 func AgeKeyFilePath() string {
 	return filepath.Join(ConfigDirPath(), AgeKeyFile)
+}
+
+// TrashDirPath is where pull moves local files that vanished from the remote
+// (spec §7); nothing is ever unlinked outright.
+func TrashDirPath() string {
+	return filepath.Join(ConfigDirPath(), TrashDir)
 }
 
 const (

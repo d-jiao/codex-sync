@@ -51,6 +51,7 @@ func newPeer(t *testing.T, env *testEnv) *testEnv {
 		claudeDir: base,
 		quiet:     true,
 		cfg:       &config.Config{},
+		trashDir:  filepath.Join(stateDir, "trash"),
 	}
 	return &testEnv{syncer: syncer, store: env.store, claudeDir: base, stateDir: stateDir}
 }

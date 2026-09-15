@@ -162,6 +162,7 @@ func setupTestEnv(t *testing.T) *testEnv {
 		claudeDir: claudeDir,
 		quiet:     true,
 		cfg:       &config.Config{},
+		trashDir:  filepath.Join(stateDir, "trash"),
 	}
 
 	return &testEnv{

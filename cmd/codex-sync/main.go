@@ -1103,7 +1103,7 @@ func pushCmd() *cobra.Command {
 }
 
 func pullCmd() *cobra.Command {
-	var dryRun, force bool
+	var dryRun, force, noDelete bool
 
 	cmd := &cobra.Command{
 		Use:   "pull",
@@ -1127,6 +1127,7 @@ Examples:
 			if err != nil {
 				return err
 			}
+			syncer.SetNoDelete(noDelete)
 
 			ctx := context.Background()
 
@@ -1189,7 +1190,7 @@ Examples:
 			if !quiet {
 				fmt.Println() // Clear the progress line
 
-				if len(result.Downloaded) == 0 && len(result.Merged) == 0 && len(result.Conflicts) == 0 && len(result.Errors) == 0 {
+				if len(result.Downloaded) == 0 && len(result.Merged) == 0 && len(result.Conflicts) == 0 && len(result.Errors) == 0 && len(result.Removed) == 0 && len(result.KeptLocal) == 0 {
 					// Already printed "Already up to date"
 				} else {
 					// Summary
@@ -1199,6 +1200,12 @@ Examples:
 					}
 					if len(result.Merged) > 0 {
 						parts = append(parts, fmt.Sprintf("%s%d merged%s", colorGreen, len(result.Merged), colorReset))
+					}
+					if len(result.Removed) > 0 {
+						parts = append(parts, fmt.Sprintf("%s%d removed%s", colorYellow, len(result.Removed), colorReset))
+					}
+					if len(result.KeptLocal) > 0 {
+						parts = append(parts, fmt.Sprintf("%s%d kept%s", colorYellow, len(result.KeptLocal), colorReset))
 					}
 					if len(result.Conflicts) > 0 {
 						parts = append(parts, fmt.Sprintf("%s%d conflicts%s", colorYellow, len(result.Conflicts), colorReset))
@@ -1219,6 +1226,19 @@ Examples:
 						fmt.Printf("%sRun '%scodex-sync conflicts%s%s' to review and resolve.%s\n", colorDim, colorCyan, colorReset, colorDim, colorReset)
 					}
 
+					if len(result.Removed) > 0 {
+						fmt.Printf("\n%sRemoved (vanished from remote; moved to %s):%s\n", colorDim, config.TrashDirPath(), colorReset)
+						for _, p := range result.Removed {
+							fmt.Printf("  %s-%s %s\n", colorYellow, colorReset, p)
+						}
+					}
+					if len(result.KeptLocal) > 0 {
+						fmt.Printf("\n%sKept (vanished from remote but changed locally):%s\n", colorDim, colorReset)
+						for _, p := range result.KeptLocal {
+							fmt.Printf("  %s•%s %s\n", colorYellow, colorReset, p)
+						}
+					}
+
 					if len(result.Errors) > 0 {
 						fmt.Printf("\n%sErrors:%s\n", colorYellow, colorReset)
 						for _, e := range result.Errors {
@@ -1234,6 +1254,7 @@ Examples:
 
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Show what would be changed without making changes")
 	cmd.Flags().BoolVar(&force, "force", false, "Overwrite existing files without confirmation")
+	cmd.Flags().BoolVar(&noDelete, "no-delete", false, "Never remove local files that vanished from the remote")
 
 	return cmd
 }
@@ -2293,7 +2314,7 @@ func showPullPreview(ctx context.Context, syncer *sync.Syncer) error {
 	}
 
 	// If nothing would happen
-	total := len(preview.WouldDownload) + len(preview.WouldOverwrite) + len(preview.WouldConflict) + len(preview.WouldMerge)
+	total := len(preview.WouldDownload) + len(preview.WouldOverwrite) + len(preview.WouldConflict) + len(preview.WouldMerge) + len(preview.WouldRemove)
 	if total == 0 {
 		fmt.Printf("%s✓%s Already up to date (dry run)\n", colorGreen, colorReset)
 		return nil
@@ -2344,6 +2365,21 @@ func showPullPreview(ctx context.Context, syncer *sync.Syncer) error {
 		fmt.Printf("Would keep local (%d files newer locally):\n", len(preview.WouldKeep))
 		for _, f := range preview.WouldKeep {
 			fmt.Printf("  %s=%s %s\n", colorDim, colorReset, f.Path)
+		}
+		fmt.Println()
+	}
+
+	if len(preview.WouldRemove) > 0 {
+		fmt.Printf("Would remove (%d files vanished from remote; moved to %s):\n", len(preview.WouldRemove), config.TrashDirPath())
+		for _, f := range preview.WouldRemove {
+			fmt.Printf("  %s-%s %s (%s)\n", colorYellow, colorReset, f.Path, util.FormatSize(f.LocalSize))
+		}
+		fmt.Println()
+	}
+	if len(preview.WouldKeepLocal) > 0 {
+		fmt.Printf("Would keep (%d files vanished from remote but changed locally):\n", len(preview.WouldKeepLocal))
+		for _, f := range preview.WouldKeepLocal {
+			fmt.Printf("  %s•%s %s\n", colorYellow, colorReset, f.Path)
 		}
 		fmt.Println()
 	}
@@ -2404,7 +2440,7 @@ func executePull(ctx context.Context, syncer *sync.Syncer) error {
 	if !quiet {
 		fmt.Println()
 
-		if len(result.Downloaded) == 0 && len(result.Merged) == 0 && len(result.Conflicts) == 0 && len(result.Errors) == 0 {
+		if len(result.Downloaded) == 0 && len(result.Merged) == 0 && len(result.Conflicts) == 0 && len(result.Errors) == 0 && len(result.Removed) == 0 && len(result.KeptLocal) == 0 {
 			// Already printed "Already up to date"
 		} else {
 			var parts []string
@@ -2413,6 +2449,12 @@ func executePull(ctx context.Context, syncer *sync.Syncer) error {
 			}
 			if len(result.Merged) > 0 {
 				parts = append(parts, fmt.Sprintf("%s%d merged%s", colorGreen, len(result.Merged), colorReset))
+			}
+			if len(result.Removed) > 0 {
+				parts = append(parts, fmt.Sprintf("%s%d removed%s", colorYellow, len(result.Removed), colorReset))
+			}
+			if len(result.KeptLocal) > 0 {
+				parts = append(parts, fmt.Sprintf("%s%d kept%s", colorYellow, len(result.KeptLocal), colorReset))
 			}
 			if len(result.Conflicts) > 0 {
 				parts = append(parts, fmt.Sprintf("%s%d conflicts%s", colorYellow, len(result.Conflicts), colorReset))
@@ -2431,6 +2473,19 @@ func executePull(ctx context.Context, syncer *sync.Syncer) error {
 				}
 				fmt.Printf("\n%sLocal versions kept. Remote saved as .conflict files.%s\n", colorDim, colorReset)
 				fmt.Printf("%sRun '%scodex-sync conflicts%s%s' to review and resolve.%s\n", colorDim, colorCyan, colorReset, colorDim, colorReset)
+			}
+
+			if len(result.Removed) > 0 {
+				fmt.Printf("\n%sRemoved (vanished from remote; moved to %s):%s\n", colorDim, config.TrashDirPath(), colorReset)
+				for _, p := range result.Removed {
+					fmt.Printf("  %s-%s %s\n", colorYellow, colorReset, p)
+				}
+			}
+			if len(result.KeptLocal) > 0 {
+				fmt.Printf("\n%sKept (vanished from remote but changed locally):%s\n", colorDim, colorReset)
+				for _, p := range result.KeptLocal {
+					fmt.Printf("  %s•%s %s\n", colorYellow, colorReset, p)
+				}
 			}
 
 			if len(result.Errors) > 0 {
