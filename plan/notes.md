@@ -96,3 +96,48 @@ git cherry-pick -x <sha>
 ### Zero-code fallback
 `rclone bisync ~/.codex r2crypt:codex --filter-from codex.filter`, a `sqlite3 .backup`
 pre-step, and a launchd plist. Loses path mapping and the status/diff/conflicts UX.
+
+## Spike results (2026-09-15): where Codex keeps thread state
+
+**Question.** Can a machine that receives only files (no SQLite) list and resume the
+other machine's Codex threads?
+
+**Method.** Fresh `CODEX_HOME` directories in the scratchpad (APFS clones of
+`~/.codex/sessions`, later `archived_sessions/`, plus `session_index.jsonl`; no DBs, no
+`auth.json`, no `config.toml`). Threads listed non-interactively over the app-server
+protocol (`codex app-server --stdio`, `initialize` → `thread/list`, paginated, all
+`sourceKinds`, `modelProviders: ["cpa","openai"]`). Engine: the ChatGPT app's bundled
+`codex-cli 0.154.0-alpha.6.2` (`/Applications/ChatGPT.app/Contents/Resources/codex`).
+Control: a full clone of the real home with its real DB. Harness kept as throwaway in
+`plan/spike/list_threads.py`.
+
+**Findings.**
+- `state_5.sqlite` (sqlx, 54 migrations) has `threads` (id, **absolute** `rollout_path`,
+  cwd, title/name, archived, model_provider, …), `backfill_state` (one-time scan,
+  `complete`), `rollout_migration_state`, `thread_spawn_edges`, `projects`, and
+  `remote_control_enrollments` (identity — never sync). `thread_history_1.sqlite` is a
+  projection of rollouts with per-thread byte offsets. `sqlite/codex-dev.db` is the desktop
+  app's catalog (`local_thread_catalog`, hosts `local` + `chatgpt:<workspace>`) plus
+  `automations` (empty here). `memories_1.sqlite` empty (feature experimental).
+- Fresh home, files only: backfill created `state_5.sqlite` with 139 threads = the 139
+  rollouts present; listing = 109 user-visible threads vs control 111 (difference = the
+  withheld day). All unlisted files are `thread_spawn` sub-agent children (37 in control).
+- Older rollouts added after the DB existed (simulated pull): indexed and listed on the
+  next `thread/list` (109 → 111, DB 139 → 141). No watermark gating.
+- `archived_sessions/` added later: 90 archived threads listed with `archived: true`.
+- Names: fresh home lists 0 named threads vs 55 in control. `session_index.jsonl`
+  (`{id, thread_name, updated_at}`) matches 111/112 DB names exactly; names are not inside
+  rollout files. So the file is durable, the DB column is a runtime cache the backfill
+  doesn't fill.
+- Files the engine regenerates in an empty home (never sync): `installation_id`,
+  `state_5.sqlite*`, `logs_2.sqlite*`, `goals_1.sqlite*`, `memories_1.sqlite*`,
+  `queue_1.sqlite*`, `skills/`, `.tmp/`, `tmp/` (0.142 also wrote a minimal `config.toml`).
+- Gotchas: default `thread/list` shows only the current model provider's threads (fresh
+  home = `openai` → 33 of 139); the standalone CLI 0.142.1 listed 2 threads from a DB
+  written by 0.153.1 (schema/JSON skew) — keep engine versions aligned on both Macs;
+  `thread/list.updatedAt` followed the copied file's mtime (append re-index likely, unverified).
+
+**Recommendation.** Sync files only; exclude every `*.sqlite*`. Add a post-pull
+name-reconciliation step or document names as a v1 gap. Treat `session_index.jsonl` like
+`history.jsonl` (union merge by id). Put `config.toml` in scope with home-path rewriting
+for `[projects."…"]` keys. Test the append case during Phase 4 with a real second machine.

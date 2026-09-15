@@ -23,12 +23,15 @@ work continues on either machine — what claude-sync already does for `~/.claud
   `tawanorg/claude-sync` main @ `49420ef`; `upstream` remote with `tagOpt --no-tags`;
   `2ef1c88` rename (module `github.com/d-jiao/codex-sync`, binary `codex-sync`,
   config `~/.codex-sync/`, env `CODEX_SYNC_*`); `f3cd042` strip npm/release/plugin/assets.
-  - [ ] Loose ends: create `LICENSE` (MIT; `NOTICE` is staged and references it) and
-    commit; remove the Node job from `.github/workflows/ci.yml` (~L60–67, it tested the
-    deleted `install.js`); delete leftover `bin/claude-sync.js`; gitignore `bin/codex-sync`.
-- [ ] Phase 1: Spike — copy `sessions/` (+ `session_index.jsonl`) into a fresh
-  `CODEX_HOME`; does Codex list those conversations? Decides whether SQLite state must
-  be synced at all. Output is an answer, not code.
+  - [x] Loose ends done in `6731c59`: LICENSE + NOTICE, CI Node job and semantic-release
+    target removed, `.gitignore` renamed, `bin/claude-sync.js` deleted, plan files added.
+- [x] Phase 1: Spike (2026-09-15) — **answer: rollout files are the source of truth;
+  no SQLite needs to be synced.** A fresh `CODEX_HOME` holding only `sessions/`,
+  `archived_sessions/` and `session_index.jsonl` rebuilds `state_5.sqlite` and lists the
+  same user-visible threads as the real home (111 vs 111, archived 90); older rollouts
+  dropped in after the DB exists are discovered immediately (no watermark gating).
+  Gaps: thread names (DB-only at runtime, durable in `session_index.jsonl`) and
+  `config.toml` provider dependence. Evidence in `plan/notes.md` → "Spike results".
 - [ ] Phase 2: Design spec → `docs/specs/2026-09-15-codex-sync-design.md` (repo
   convention: `docs/specs/`). Cover: base dir `~/.codex`; Codex path profile + default
   excludes; bucket/namespace; `${HOME}` rewriting of `cwd` in rollout JSONL and
@@ -43,13 +46,27 @@ work continues on either machine — what claude-sync already does for `~/.claud
   upstream PR adding the missing `LICENSE` file to claude-sync.
 
 ## Key Questions
-1. Does Codex rebuild its session list from `sessions/**/rollout-*.jsonl`, or is
-   `state_5.sqlite` / `thread_history_1.sqlite` authoritative? (Phase 1)
+1. ~~Does Codex rebuild its session list from rollout files?~~ **Yes** (Phase 1 spike):
+   `state_5.sqlite` and `thread_history_1.sqlite` are derived; never sync them.
 2. Do both Macs use the same macOS username and project layout? If yes, `cwd`
    rewriting can wait.
 3. Sync `archived_sessions/` (387 MB here) in v1, or sessions-only first?
 4. Which Codex writes are safe to sync while Codex runs (rollout JSONL is append-only?),
-   and what needs a quiesce or snapshot?
+   and what needs a quiesce or snapshot? (No snapshot needed for SQLite any more.)
+5. Names: `session_index.jsonl` is the durable record (111/112 names match), but the
+   backfill never copies names into `threads.name`, so a pulled machine lists threads
+   unnamed. Options: post-pull reconciliation of `threads.name` (tiny UPDATE, only with
+   Codex closed), or document as a v1 limitation. Also: this file is single-file
+   last-writer-wins across machines → needs a union-by-id merge like `history.jsonl`.
+6. Does Codex refresh `updated_at`/preview when a synced rollout grows (pulled after the
+   other Mac appended turns)? `thread/list` reported `updatedAt` = file mtime, which
+   suggests yes; verify with a real append.
+7. `config.toml`: threads are recorded per model provider and the listing shows only the
+   *current* provider's threads. Both Macs need the same provider config (`cpa` here),
+   so `config.toml` belongs in the sync set — but it contains absolute `[projects."…"]`
+   paths (home-rewrite needed) and machine-specific sections; decide merge vs. copy.
+8. Both Macs must run the same Codex engine version: 0.142.1 could not list threads
+   written by 0.153.1/0.154 (rows silently dropped). Support caveat, not a sync bug.
 
 ## Decisions Made
 - Standalone repo, not the contribution fork: GitHub allows one fork per account, and
@@ -65,6 +82,9 @@ work continues on either machine — what claude-sync already does for `~/.claud
 - Behavior change (`~/.claude` → `~/.codex`) is deliberately NOT part of the bootstrap;
   it is Phases 2–4.
 - Private repo until it works; public later.
+- Sync set is files only: `sessions/`, `archived_sessions/`, `session_index.jsonl`,
+  `history.jsonl`, `config.toml` (with care), `rules/`, `skills/`, `memories/`, `AGENTS.md`.
+  Every `*.sqlite*` is derived or machine-local and is excluded (spike, 2026-09-15).
 
 ## Errors Encountered
 - Step-5 bootstrap block only echoed a placeholder for `LICENSE`, so the file was never
@@ -72,5 +92,10 @@ work continues on either machine — what claude-sync already does for `~/.claud
 - Step-4 block did not edit `ci.yml` (the manual edit was noted, not scripted); Node job
   still present and would fail CI on the missing `install.test.js`. → Phase 0 loose ends.
 
+- Spike gotchas: (a) `thread/list` filters by current model provider unless
+  `modelProviders` is passed; (b) engine version skew hides threads; (c) the TUI picker
+  can't be captured with `script` — it waits on terminal capability queries.
+
 ## Status
-**Phase 0 nearly complete** — bootstrap pushed; finish loose ends, then the Phase 1 spike.
+**Phase 1 complete, Phase 2 next** — write the design spec in `docs/specs/`; the plan
+updates and `plan/spike/` harness are uncommitted.
