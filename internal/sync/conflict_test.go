@@ -188,8 +188,8 @@ func TestPushRefusesFileWithLiveConflictSidecar(t *testing.T) {
 		t.Error("remote object must be untouched while the conflict is unresolved")
 	}
 
-	// Resolving with `conflicts --keep local` deletes the sidecar; the next
-	// push then publishes the local version.
+	// Once the sidecar is gone (what resolving the conflict does on disk),
+	// the next push publishes the local version.
 	if err := os.Remove(filepath.Join(b.claudeDir, sidecar)); err != nil {
 		t.Fatal(err)
 	}
