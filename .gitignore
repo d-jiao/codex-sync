@@ -25,6 +25,9 @@ bin/codex-sync-*
 vendor/
 node_modules/
 
+# Python
+__pycache__/
+
 # IDE
 .idea/
 .vscode/

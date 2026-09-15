@@ -38,7 +38,7 @@ work continues on either machine — what claude-sync already does for `~/.claud
   `session_index.jsonl`; gate or remove Claude-only modules; SQLite policy (from spike);
   daily schedule (launchd); README/CLAUDE.md rewrite.
 - [x] Phase 3: Implementation plan — `plan/2026-09-15-codex-sync-v1-implementation.md` (12 tasks, TDD, one commit each).
-- [ ] Phase 4: Implement with TDD; `make check` green; upstream's test suite is the safety net.
+- [x] Phase 4: Implement with TDD; `make check` green; upstream's test suite is the safety net.
 - [ ] Phase 5: Roll out — new R2 bucket `codex-sync`; `codex-sync init` + first push on
   this Mac; pull on the second Mac; launchd daily job on both; verify a conversation
   resumes cross-machine.
@@ -97,4 +97,4 @@ work continues on either machine — what claude-sync already does for `~/.claud
   can't be captured with `script` — it waits on terminal capability queries.
 
 ## Status
-**Phase 4 next** — spec approved (`93eb737`); execute the implementation plan task by task.
+**Phase 5 next** — rollout per spec §12 (init on the first Mac, push, init + pull on the second, launchd on both).
