@@ -60,10 +60,6 @@ deps:
 	$(GO) mod download
 	$(GO) mod tidy
 
-# Dry run semantic-release (requires npm packages)
-release-dry-run:
-	npx semantic-release --dry-run
-
 # Setup git hooks
 setup-hooks:
 	git config core.hooksPath .githooks

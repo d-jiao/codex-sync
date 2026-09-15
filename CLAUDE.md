@@ -1,5 +1,7 @@
 # CLAUDE.md
 
+> **Fork status (2026-09-15):** this repository is codex-sync, a fork of claude-sync being adapted to `~/.codex`. Read `plan/task_plan.md` and `plan/notes.md` before working. The guidance below still describes the claude-sync engine and remains valid for build and test.
+
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
 ## Repository Purpose
