@@ -48,8 +48,8 @@ work continues on either machine — what claude-sync already does for `~/.claud
 ## Key Questions
 1. ~~Does Codex rebuild its session list from rollout files?~~ **Yes** (Phase 1 spike):
    `state_5.sqlite` and `thread_history_1.sqlite` are derived; never sync them.
-2. Do both Macs use the same macOS username and project layout? If yes, `cwd`
-   rewriting can wait.
+2. ~~Do both Macs use the same macOS username?~~ Yes — but nothing is configured either
+   way: the engine's automatic `${HOME}` mapping stays (a no-op for equal homes).
 3. Sync `archived_sessions/` (387 MB here) in v1, or sessions-only first?
 4. Which Codex writes are safe to sync while Codex runs (rollout JSONL is append-only?),
    and what needs a quiesce or snapshot? (No snapshot needed for SQLite any more.)
@@ -97,5 +97,5 @@ work continues on either machine — what claude-sync already does for `~/.claud
   can't be captured with `script` — it waits on terminal capability queries.
 
 ## Status
-**Phase 1 complete, Phase 2 next** — write the design spec in `docs/specs/`; the plan
-updates and `plan/spike/` harness are uncommitted.
+**Phase 2 in progress** — draft spec at `docs/specs/2026-09-15-codex-sync-design.md`,
+awaiting review; then Phase 3 (implementation plan).
