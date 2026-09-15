@@ -1,7 +1,6 @@
 package sync
 
 import (
-	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -442,67 +441,6 @@ func TestIsEmpty(t *testing.T) {
 
 	if state.IsEmpty() {
 		t.Error("state with LastSync set should not be empty")
-	}
-}
-
-func TestGetMCPBaseline_Empty(t *testing.T) {
-	state := NewState()
-
-	servers, err := state.GetMCPBaseline()
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if servers != nil {
-		t.Error("expected nil servers for empty baseline")
-	}
-}
-
-func TestSetAndGetMCPBaseline(t *testing.T) {
-	state := NewState()
-
-	servers := MCPServers{
-		"test-server": json.RawMessage(`{"command":"node","args":["server.js"]}`),
-	}
-
-	if err := state.SetMCPBaseline(servers); err != nil {
-		t.Fatalf("SetMCPBaseline failed: %v", err)
-	}
-
-	got, err := state.GetMCPBaseline()
-	if err != nil {
-		t.Fatalf("GetMCPBaseline failed: %v", err)
-	}
-
-	if len(got) != 1 {
-		t.Fatalf("expected 1 server, got %d", len(got))
-	}
-	if _, ok := got["test-server"]; !ok {
-		t.Error("expected test-server in baseline")
-	}
-}
-
-func TestSetMCPBaseline_Nil(t *testing.T) {
-	state := NewState()
-
-	// Set something first
-	servers := MCPServers{
-		"s": json.RawMessage(`{"command":"node"}`),
-	}
-	if err := state.SetMCPBaseline(servers); err != nil {
-		t.Fatal(err)
-	}
-
-	// Set nil clears it
-	if err := state.SetMCPBaseline(nil); err != nil {
-		t.Fatalf("SetMCPBaseline(nil) failed: %v", err)
-	}
-
-	got, err := state.GetMCPBaseline()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got != nil {
-		t.Error("expected nil after setting nil baseline")
 	}
 }
 

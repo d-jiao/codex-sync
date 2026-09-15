@@ -17,10 +17,6 @@ const (
 	StateFile  = "state.json"
 	AgeKeyFile = "age-key.txt"
 
-	// MCPRemoteKey is the remote storage key for synced MCP server configs.
-	// The _external/ prefix separates it from ~/.claude/-relative files.
-	MCPRemoteKey = "_external/mcp-servers.json"
-
 	// Sync scopes control which subset of ~/.claude is synced.
 	// ScopeFull (default) syncs everything in SyncPaths; ScopeSessions limits
 	// syncing to portable conversation data only.
@@ -53,12 +49,6 @@ type Config struct {
 	// Use GetEffectiveSyncPaths() to get the actual paths to sync.
 	SyncPaths []string `yaml:"sync_paths,omitempty"`
 
-	// MCPSync enables syncing MCP server configs from ~/.claude.json.
-	// Pointer type allows distinguishing between unset (nil), enabled (true),
-	// and explicitly disabled (false). Nil is treated as disabled for backward
-	// compatibility with existing configs.
-	MCPSync *bool `yaml:"mcp_sync,omitempty"`
-
 	// PathMap maps local directory prefixes to shared token names so project
 	// sessions stay resumable across devices with different layouts.
 	// The home directory is always mapped (token HOME); add entries here when
@@ -75,9 +65,6 @@ type Config struct {
 
 	// StateDirOverride allows overriding the state file directory (for testing)
 	StateDirOverride string `yaml:"-"`
-
-	// ClaudeJSONOverride allows overriding the ~/.claude.json path (for testing)
-	ClaudeJSONOverride string `yaml:"-"`
 }
 
 // SyncPaths defines which paths under ~/.claude to sync in the default "full" scope.
@@ -179,15 +166,6 @@ func BaseDirE() (string, error) {
 		return "", ErrNoHomeDir
 	}
 	return filepath.Join(home, DefaultBaseDirName), nil
-}
-
-// ClaudeJSONPath returns the path to ~/.claude.json where global MCP servers are configured.
-func ClaudeJSONPath() string {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return ""
-	}
-	return filepath.Join(home, ".claude.json")
 }
 
 func Load() (*Config, error) {
@@ -324,17 +302,6 @@ func (c *Config) GetEffectiveSyncPaths() []string {
 		return scoped
 	}
 	return within
-}
-
-// IsMCPSyncEnabled returns true if MCP sync is explicitly enabled.
-// Returns false if MCPSync is nil (unset) or false.
-func (c *Config) IsMCPSyncEnabled() bool {
-	return c.MCPSync != nil && *c.MCPSync
-}
-
-// SetMCPSync sets the MCP sync state. Pass true to enable, false to explicitly disable.
-func (c *Config) SetMCPSync(enabled bool) {
-	c.MCPSync = &enabled
 }
 
 // IsExcluded returns true if the given relative path matches any exclude pattern.
