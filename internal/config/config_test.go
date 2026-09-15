@@ -78,7 +78,8 @@ func TestAgeKeyFilePath(t *testing.T) {
 	}
 }
 
-func TestClaudeDir(t *testing.T) {
+func TestBaseDir(t *testing.T) {
+	t.Setenv("CODEX_HOME", "")
 	path := BaseDir()
 	if path == "" {
 		t.Fatal("BaseDir should not return empty string")

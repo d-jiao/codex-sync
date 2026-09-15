@@ -15,6 +15,7 @@ import (
 func TestCreateBackupSetsRestrictivePermissions(t *testing.T) {
 	tmpHome := t.TempDir()
 	t.Setenv("HOME", tmpHome)
+	t.Setenv("CODEX_HOME", "")
 
 	// Populate the Codex base dir with a file inside a syncable subdirectory so that
 	// createBackup also creates a nested directory we can stat.

@@ -4,6 +4,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/d-jiao/codex-sync/internal/config"
 )
 
 func TestResetClearsConfigDir(t *testing.T) {
@@ -77,35 +79,36 @@ func TestResetClearsStateFile(t *testing.T) {
 	}
 }
 
-func TestResetPreservesClaudeDir(t *testing.T) {
+func TestResetPreservesBaseDir(t *testing.T) {
 	tmpDir := t.TempDir()
 	t.Setenv("HOME", tmpDir)
+	t.Setenv("CODEX_HOME", "")
 
 	// Create both directories
 	configDir := filepath.Join(tmpDir, ".codex-sync")
-	claudeDir := filepath.Join(tmpDir, ".claude")
+	baseDir := filepath.Join(tmpDir, config.DefaultBaseDirName)
 
 	if err := os.MkdirAll(configDir, 0700); err != nil {
 		t.Fatalf("Failed to create config dir: %v", err)
 	}
-	if err := os.MkdirAll(claudeDir, 0755); err != nil {
-		t.Fatalf("Failed to create claude dir: %v", err)
+	if err := os.MkdirAll(baseDir, 0755); err != nil {
+		t.Fatalf("Failed to create base dir: %v", err)
 	}
 
-	// Create a session file in claude dir
-	sessionFile := filepath.Join(claudeDir, "session.jsonl")
+	// Create a session file in base dir
+	sessionFile := filepath.Join(baseDir, "session.jsonl")
 	if err := os.WriteFile(sessionFile, []byte("session data"), 0644); err != nil {
 		t.Fatalf("Failed to create session file: %v", err)
 	}
 
-	// Remove only config dir (reset should not touch .claude)
+	// Remove only config dir (reset should not touch base dir)
 	if err := os.RemoveAll(configDir); err != nil {
 		t.Fatalf("Failed to remove config dir: %v", err)
 	}
 
-	// Verify .claude is still there
-	if _, err := os.Stat(claudeDir); os.IsNotExist(err) {
-		t.Error(".claude directory should be preserved after reset")
+	// Verify base dir is still there
+	if _, err := os.Stat(baseDir); os.IsNotExist(err) {
+		t.Errorf("Base directory (%s) should be preserved after reset", config.DefaultBaseDirName)
 	}
 
 	// Verify session file is still there
