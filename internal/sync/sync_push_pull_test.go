@@ -336,7 +336,8 @@ func TestPullDetectsConflicts(t *testing.T) {
 	env := setupTestEnv(t)
 	ctx := context.Background()
 
-	writeFile(t, env.claudeDir, "history.jsonl", `{"event":"local-v1"}`)
+	const relPath = "sessions/2026/01/01/rollout-conflict.jsonl"
+	writeFile(t, env.claudeDir, relPath, `{"event":"local-v1"}`)
 
 	// Push to establish baseline
 	if _, err := env.syncer.Push(ctx); err != nil {
@@ -344,7 +345,7 @@ func TestPullDetectsConflicts(t *testing.T) {
 	}
 
 	// Modify local file (simulating local changes)
-	writeFile(t, env.claudeDir, "history.jsonl", `{"event":"local-v2"}`)
+	writeFile(t, env.claudeDir, relPath, `{"event":"local-v2"}`)
 
 	// Modify remote file (simulating another device pushing)
 	remoteContent := []byte(`{"event":"remote-v2"}`)
@@ -354,7 +355,7 @@ func TestPullDetectsConflicts(t *testing.T) {
 	}
 	// Small delay to ensure remote timestamp is after the state's Uploaded time
 	time.Sleep(10 * time.Millisecond)
-	if err := env.store.Upload(ctx, "history.jsonl.age", encrypted); err != nil {
+	if err := env.store.Upload(ctx, env.syncer.remoteKey(relPath), encrypted); err != nil {
 		t.Fatalf("Upload to mock failed: %v", err)
 	}
 
@@ -368,22 +369,24 @@ func TestPullDetectsConflicts(t *testing.T) {
 	}
 
 	// Local file should be preserved
-	got := readFile(t, env.claudeDir, "history.jsonl")
+	got := readFile(t, env.claudeDir, relPath)
 	if got != `{"event":"local-v2"}` {
 		t.Errorf("Local file should be preserved, got %q", got)
 	}
 
-	// A .conflict file should exist
-	entries, err := os.ReadDir(env.claudeDir)
+	// A .conflict file should exist alongside the rollout
+	dir := filepath.Join(env.claudeDir, filepath.Dir(relPath))
+	entries, err := os.ReadDir(dir)
 	if err != nil {
 		t.Fatalf("ReadDir failed: %v", err)
 	}
 	conflictFound := false
+	prefix := filepath.Base(relPath) + ".conflict."
 	for _, e := range entries {
-		if strings.HasPrefix(e.Name(), "history.jsonl.conflict.") {
+		if strings.HasPrefix(e.Name(), prefix) {
 			conflictFound = true
 			// Verify conflict file contains remote content
-			data, _ := os.ReadFile(filepath.Join(env.claudeDir, e.Name()))
+			data, _ := os.ReadFile(filepath.Join(dir, e.Name()))
 			if string(data) != `{"event":"remote-v2"}` {
 				t.Errorf("Conflict file should contain remote content, got %q", string(data))
 			}
@@ -534,20 +537,22 @@ func TestConflictCreatesConflictFile(t *testing.T) {
 	env := setupTestEnv(t)
 	ctx := context.Background()
 
-	// Push initial version of history.jsonl
-	writeFile(t, env.claudeDir, "history.jsonl", "line1\n")
+	const relPath = "sessions/2026/01/01/rollout-conflict.jsonl"
+
+	// Push initial version of the rollout
+	writeFile(t, env.claudeDir, relPath, "line1\n")
 	if _, err := env.syncer.Push(ctx); err != nil {
 		t.Fatalf("Push failed: %v", err)
 	}
 
 	// Local appends
-	writeFile(t, env.claudeDir, "history.jsonl", "line1\nline2-local\n")
+	writeFile(t, env.claudeDir, relPath, "line1\nline2-local\n")
 
 	// Remote also changed
 	remoteData := []byte("line1\nline2-remote\n")
 	encrypted, _ := env.syncer.encryptor.Encrypt(remoteData)
 	time.Sleep(10 * time.Millisecond)
-	if err := env.store.Upload(ctx, "history.jsonl.age", encrypted); err != nil {
+	if err := env.store.Upload(ctx, env.syncer.remoteKey(relPath), encrypted); err != nil {
 		t.Fatalf("Upload to mock failed: %v", err)
 	}
 
@@ -561,23 +566,25 @@ func TestConflictCreatesConflictFile(t *testing.T) {
 	if len(result.Conflicts) != 1 {
 		t.Fatalf("Expected 1 conflict, got %d", len(result.Conflicts))
 	}
-	if result.Conflicts[0] != "history.jsonl" {
-		t.Errorf("Expected conflict on history.jsonl, got %s", result.Conflicts[0])
+	if result.Conflicts[0] != relPath {
+		t.Errorf("Expected conflict on %s, got %s", relPath, result.Conflicts[0])
 	}
 
 	// Local preserved
-	local := readFile(t, env.claudeDir, "history.jsonl")
+	local := readFile(t, env.claudeDir, relPath)
 	if local != "line1\nline2-local\n" {
 		t.Errorf("Local should be preserved, got %q", local)
 	}
 
-	// Conflict file has remote content
-	entries, _ := os.ReadDir(env.claudeDir)
+	// Conflict file has remote content, alongside the rollout
+	dir := filepath.Join(env.claudeDir, filepath.Dir(relPath))
+	entries, _ := os.ReadDir(dir)
 	found := false
+	prefix := filepath.Base(relPath) + ".conflict."
 	for _, e := range entries {
-		if strings.Contains(e.Name(), "history.jsonl.conflict.") {
+		if strings.Contains(e.Name(), prefix) {
 			found = true
-			data, _ := os.ReadFile(filepath.Join(env.claudeDir, e.Name()))
+			data, _ := os.ReadFile(filepath.Join(dir, e.Name()))
 			if string(data) != "line1\nline2-remote\n" {
 				t.Errorf("Conflict file content mismatch: %q", string(data))
 			}

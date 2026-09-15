@@ -57,6 +57,7 @@ type Syncer struct {
 type SyncResult struct {
 	Uploaded   []string
 	Downloaded []string
+	Merged     []string
 	Deleted    []string
 	Conflicts  []string
 	Errors     []error
@@ -322,6 +323,16 @@ func (s *Syncer) Pull(ctx context.Context) (*SyncResult, error) {
 		localInfo, localExists := localFiles[localPath]
 		stateFile := s.state.GetFile(localPath)
 
+		if IsMergeablePath(localPath) {
+			merged, err := s.mergeRemote(ctx, localPath, remoteObj, localExists, stateFile)
+			if err != nil {
+				result.Errors = append(result.Errors, fmt.Errorf("%s: %w", localPath, err))
+			} else if merged {
+				result.Merged = append(result.Merged, localPath)
+			}
+			continue
+		}
+
 		shouldDownload := false
 
 		if !localExists {
@@ -462,42 +473,51 @@ func (s *Syncer) uploadFile(ctx context.Context, relativePath string) error {
 	return nil
 }
 
+// fetchRemote downloads, decrypts, decompresses and de-tokenizes one remote object.
+func (s *Syncer) fetchRemote(ctx context.Context, relativePath, remoteKey string) ([]byte, error) {
+	encrypted, err := s.storage.Download(ctx, remoteKey)
+	if err != nil {
+		return nil, fmt.Errorf("failed to download: %w", err)
+	}
+	data, err := s.encryptor.Decrypt(encrypted)
+	if err != nil {
+		return nil, fmt.Errorf("failed to decrypt: %w", err)
+	}
+	// Backward-compatible: older remote blobs may be uncompressed
+	if isGzipped(data) {
+		if data, err = gzipDecompress(data); err != nil {
+			return nil, fmt.Errorf("failed to decompress: %w", err)
+		}
+	}
+	if IsPortableContentPath(relativePath) {
+		data = s.paths.ResolveContent(data)
+	}
+	return data, nil
+}
+
+// localFilePath resolves a relative path under the base dir, refusing anything
+// that would escape it (crafted remote keys).
+func (s *Syncer) localFilePath(relativePath string) (string, error) {
+	fullPath := filepath.Join(s.claudeDir, relativePath)
+	if !strings.HasPrefix(filepath.Clean(fullPath), filepath.Clean(s.claudeDir)+string(filepath.Separator)) {
+		return "", fmt.Errorf("refusing to write outside %s: %s", s.claudeDir, relativePath)
+	}
+	return fullPath, nil
+}
+
 // downloadFile downloads and decrypts a file from remote storage.
 // If originalMtime is non-nil, the file's modification time will be restored to that value.
 func (s *Syncer) downloadFile(ctx context.Context, relativePath, remoteKey string, originalMtime *time.Time) error {
 	if config.IsProtected(relativePath) {
 		return fmt.Errorf("refusing to write protected file %s", relativePath)
 	}
-
-	// Download
-	encrypted, err := s.storage.Download(ctx, remoteKey)
+	data, err := s.fetchRemote(ctx, relativePath, remoteKey)
 	if err != nil {
-		return fmt.Errorf("failed to download: %w", err)
+		return err
 	}
-
-	// Decrypt
-	data, err := s.encryptor.Decrypt(encrypted)
+	fullPath, err := s.localFilePath(relativePath)
 	if err != nil {
-		return fmt.Errorf("failed to decrypt: %w", err)
-	}
-
-	// Decompress if gzipped (backward-compatible with uncompressed data)
-	if isGzipped(data) {
-		data, err = gzipDecompress(data)
-		if err != nil {
-			return fmt.Errorf("failed to decompress: %w", err)
-		}
-	}
-
-	// Replace portable tokens with this device's paths in session content
-	if IsPortableContentPath(relativePath) {
-		data = s.paths.ResolveContent(data)
-	}
-
-	// Guard against path traversal from crafted remote keys
-	fullPath := filepath.Join(s.claudeDir, relativePath)
-	if !strings.HasPrefix(filepath.Clean(fullPath), filepath.Clean(s.claudeDir)+string(filepath.Separator)) {
-		return fmt.Errorf("refusing to write outside %s: %s", s.claudeDir, relativePath)
+		return err
 	}
 
 	// Ensure directory exists
@@ -538,6 +558,44 @@ func (s *Syncer) handleConflict(ctx context.Context, relativePath string, remote
 	}
 
 	return nil
+}
+
+// mergeRemote handles a mergeable file (see IsMergeablePath): the remote copy is
+// unioned into the local one whenever the remote changed since the last sync,
+// or was never synced here. State records the remote hash, so the next push
+// uploads the union exactly when the local copy contributed something.
+func (s *Syncer) mergeRemote(ctx context.Context, relativePath string, remoteObj storage.ObjectInfo, localExists bool, stateFile *FileState) (bool, error) {
+	if stateFile != nil && localExists && !remoteObj.LastModified.After(stateFile.Uploaded) {
+		return false, nil // remote unchanged since we last merged it
+	}
+	remoteData, err := s.fetchRemote(ctx, relativePath, remoteObj.Key)
+	if err != nil {
+		return false, err
+	}
+	fullPath, err := s.localFilePath(relativePath)
+	if err != nil {
+		return false, err
+	}
+	var localData []byte
+	if localExists {
+		if localData, err = os.ReadFile(fullPath); err != nil {
+			return false, fmt.Errorf("failed to read local file: %w", err)
+		}
+	}
+	merged, err := MergeJSONL(relativePath, localData, remoteData)
+	if err != nil {
+		return false, err
+	}
+	if err := writeFileAtomic(fullPath, merged, 0600); err != nil {
+		return false, fmt.Errorf("failed to write merged file: %w", err)
+	}
+	info, err := os.Stat(fullPath)
+	if err != nil {
+		return false, err
+	}
+	s.state.UpdateFile(relativePath, info, hashBytes(remoteData))
+	s.state.MarkUploaded(relativePath)
+	return true, nil
 }
 
 // uploadManifest builds and uploads a manifest containing file mtimes from current state.
@@ -693,6 +751,7 @@ type PullPreview struct {
 	WouldOverwrite []FilePreview // Existing local files that would be replaced
 	WouldKeep      []FilePreview // Local files that would be kept (local newer)
 	WouldConflict  []FilePreview // Files that would create a conflict
+	WouldMerge     []FilePreview // Shared index files that would be unioned with the local copy
 	LocalOnlyFiles []FilePreview // Files that exist only locally
 }
 
@@ -730,6 +789,13 @@ func (s *Syncer) PreviewPull(ctx context.Context) (*PullPreview, error) {
 		if localExists {
 			fp.LocalTime = localInfo.ModTime()
 			fp.LocalSize = localInfo.Size()
+		}
+
+		if IsMergeablePath(localPath) {
+			if stateFile == nil || !localExists || remoteObj.LastModified.After(stateFile.Uploaded) {
+				preview.WouldMerge = append(preview.WouldMerge, fp)
+			}
+			continue
 		}
 
 		if !localExists {

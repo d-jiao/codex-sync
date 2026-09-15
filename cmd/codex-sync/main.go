@@ -1189,13 +1189,16 @@ Examples:
 			if !quiet {
 				fmt.Println() // Clear the progress line
 
-				if len(result.Downloaded) == 0 && len(result.Conflicts) == 0 && len(result.Errors) == 0 {
+				if len(result.Downloaded) == 0 && len(result.Merged) == 0 && len(result.Conflicts) == 0 && len(result.Errors) == 0 {
 					// Already printed "Already up to date"
 				} else {
 					// Summary
 					var parts []string
 					if len(result.Downloaded) > 0 {
 						parts = append(parts, fmt.Sprintf("%s%d downloaded%s", colorGreen, len(result.Downloaded), colorReset))
+					}
+					if len(result.Merged) > 0 {
+						parts = append(parts, fmt.Sprintf("%s%d merged%s", colorGreen, len(result.Merged), colorReset))
 					}
 					if len(result.Conflicts) > 0 {
 						parts = append(parts, fmt.Sprintf("%s%d conflicts%s", colorYellow, len(result.Conflicts), colorReset))
@@ -2290,7 +2293,7 @@ func showPullPreview(ctx context.Context, syncer *sync.Syncer) error {
 	}
 
 	// If nothing would happen
-	total := len(preview.WouldDownload) + len(preview.WouldOverwrite) + len(preview.WouldConflict)
+	total := len(preview.WouldDownload) + len(preview.WouldOverwrite) + len(preview.WouldConflict) + len(preview.WouldMerge)
 	if total == 0 {
 		fmt.Printf("%s✓%s Already up to date (dry run)\n", colorGreen, colorReset)
 		return nil
@@ -2304,6 +2307,14 @@ func showPullPreview(ctx context.Context, syncer *sync.Syncer) error {
 		fmt.Printf("Would download (%d new files):\n", len(preview.WouldDownload))
 		for _, f := range preview.WouldDownload {
 			fmt.Printf("  %s+%s %s (%s)\n", colorGreen, colorReset, f.Path, util.FormatSize(f.RemoteSize))
+		}
+		fmt.Println()
+	}
+
+	if len(preview.WouldMerge) > 0 {
+		fmt.Printf("Would merge (%d shared index files, union of local and remote):\n", len(preview.WouldMerge))
+		for _, f := range preview.WouldMerge {
+			fmt.Printf("  %s∪%s %s\n", colorGreen, colorReset, f.Path)
 		}
 		fmt.Println()
 	}
@@ -2393,12 +2404,15 @@ func executePull(ctx context.Context, syncer *sync.Syncer) error {
 	if !quiet {
 		fmt.Println()
 
-		if len(result.Downloaded) == 0 && len(result.Conflicts) == 0 && len(result.Errors) == 0 {
+		if len(result.Downloaded) == 0 && len(result.Merged) == 0 && len(result.Conflicts) == 0 && len(result.Errors) == 0 {
 			// Already printed "Already up to date"
 		} else {
 			var parts []string
 			if len(result.Downloaded) > 0 {
 				parts = append(parts, fmt.Sprintf("%s%d downloaded%s", colorGreen, len(result.Downloaded), colorReset))
+			}
+			if len(result.Merged) > 0 {
+				parts = append(parts, fmt.Sprintf("%s%d merged%s", colorGreen, len(result.Merged), colorReset))
 			}
 			if len(result.Conflicts) > 0 {
 				parts = append(parts, fmt.Sprintf("%s%d conflicts%s", colorYellow, len(result.Conflicts), colorReset))
