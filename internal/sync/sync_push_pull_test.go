@@ -477,6 +477,7 @@ func TestPushThenPullRoundTrip(t *testing.T) {
 		claudeDir: deviceADir,
 		quiet:     true,
 		cfg:       &config.Config{},
+		trashDir:  filepath.Join(deviceAStateDir, "trash"),
 	}
 
 	// Device A creates files and pushes
@@ -511,6 +512,7 @@ func TestPushThenPullRoundTrip(t *testing.T) {
 		claudeDir: deviceBDir,
 		quiet:     true,
 		cfg:       &config.Config{},
+		trashDir:  filepath.Join(deviceBStateDir, "trash"),
 	}
 
 	// Device B pulls

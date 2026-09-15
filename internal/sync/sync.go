@@ -632,6 +632,9 @@ func (s *Syncer) staleLocalFiles(remoteFiles map[string]storage.ObjectInfo, loca
 // moveToTrash relocates a local file to <trashDir>/<batch>/<relPath>. A rename
 // that fails (different volume) falls back to copy-then-remove.
 func (s *Syncer) moveToTrash(relPath, batch string) error {
+	if s.trashDir == "" {
+		return fmt.Errorf("trash directory not configured; refusing to remove %s", relPath)
+	}
 	src := filepath.Join(s.claudeDir, relPath)
 	dst := filepath.Join(s.trashDir, batch, filepath.FromSlash(relPath))
 	if err := os.MkdirAll(filepath.Dir(dst), 0700); err != nil {

@@ -126,3 +126,15 @@ func TestPreviewPullReportsRemovals(t *testing.T) {
 		t.Error("preview must not change files")
 	}
 }
+
+func TestMoveToTrashRefusesWithoutTrashDir(t *testing.T) {
+	env := setupTestEnv(t)
+	env.syncer.SetTrashDir("")
+	writeFile(t, env.claudeDir, keep, rollout)
+	if err := env.syncer.moveToTrash(keep, "batch"); err == nil {
+		t.Fatal("moveToTrash must refuse when trashDir is empty")
+	}
+	if _, err := os.Stat(filepath.Join(env.claudeDir, keep)); err != nil {
+		t.Error("file must stay in place when the move is refused")
+	}
+}
