@@ -1722,15 +1722,15 @@ func resetCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "reset",
 		Short: "Reset codex-sync (clear data and start fresh)",
-		Long: `Reset codex-sync configuration and optionally clear remote/local data.
+		Long: `Reset codex-sync configuration and optionally clear remote data.
 
-Use this if you forgot your passphrase or want to start fresh.
+Use this if you forgot your passphrase or want to start fresh. A reset
+removes ~/.codex-sync/config.yaml, age-key.txt and state.json; it never
+touches ~/.codex or the files an earlier pull moved to ~/.codex-sync/trash/.
 
 Examples:
-  codex-sync reset                    # Clear local config only
-  codex-sync reset --remote           # Also delete all files from cloud storage
-  codex-sync reset --local            # Also clear local sync state
-  codex-sync reset --remote --local   # Full reset (nuclear option)`,
+  codex-sync reset            # Remove local config, key and sync state
+  codex-sync reset --remote   # Also delete all files from cloud storage`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			reader := bufio.NewReader(os.Stdin)
 
@@ -1821,7 +1821,7 @@ Examples:
 	}
 
 	cmd.Flags().BoolVar(&clearRemote, "remote", false, "Delete all files from cloud storage bucket")
-	cmd.Flags().BoolVar(&clearLocal, "local", false, "Clear local sync state")
+	cmd.Flags().BoolVar(&clearLocal, "local", false, "Clear local sync state (every reset already does; kept for compatibility)")
 	cmd.Flags().BoolVar(&force, "force", false, "Skip confirmation prompt")
 
 	return cmd
