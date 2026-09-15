@@ -10,7 +10,7 @@ Usage:
   codex_listing_check.py --source ~/.codex --synced /path/to/other/home \
       [--codex-bin /Applications/ChatGPT.app/Contents/Resources/codex]
 """
-import argparse, json, os, re, subprocess, sys, time
+import argparse, json, os, queue, re, subprocess, sys, threading, time
 
 KINDS = ["cli", "vscode", "exec", "appServer"]  # user-visible kinds; sub-agent threads are children
 
@@ -31,16 +31,31 @@ def providers(home):
 def list_threads(codex_bin, home, provs):
     env = dict(os.environ, CODEX_HOME=home)
     p = subprocess.Popen([codex_bin, "app-server", "--stdio"], stdin=subprocess.PIPE,
-                         stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env, text=True)
+                         stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, env=env, text=True)
+
+    lines = queue.Queue()
+
+    def pump():
+        for line in p.stdout:
+            lines.put(line)
+        lines.put(None)  # EOF marker
+
+    threading.Thread(target=pump, daemon=True).start()
 
     def send(o):
         p.stdin.write(json.dumps(o) + "\n"); p.stdin.flush()
 
     def wait(rid, timeout=120):
         end = time.time() + timeout
-        while time.time() < end:
-            line = p.stdout.readline()
-            if not line:
+        while True:
+            remaining = end - time.time()
+            if remaining <= 0:
+                raise RuntimeError("timeout waiting for id %s" % rid)
+            try:
+                line = lines.get(timeout=remaining)
+            except queue.Empty:
+                raise RuntimeError("timeout waiting for id %s" % rid)
+            if line is None:
                 raise RuntimeError("app-server closed its output")
             try:
                 m = json.loads(line)
@@ -50,7 +65,6 @@ def list_threads(codex_bin, home, provs):
                 if "error" in m:
                     raise RuntimeError(m["error"])
                 return m["result"]
-        raise RuntimeError("timeout waiting for id %s" % rid)
 
     try:
         send({"id": 1, "method": "initialize", "params": {"clientInfo": {"name": "codex-sync-check", "version": "0"}}})
@@ -73,6 +87,7 @@ def list_threads(codex_bin, home, provs):
         return threads
     finally:
         p.kill()
+        p.wait()
 
 
 def main():
