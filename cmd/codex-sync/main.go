@@ -114,6 +114,30 @@ func printWarning(text string) {
 	fmt.Printf("  %s%s%s\n", colorYellow, text, colorReset)
 }
 
+// reportSyncErrors prints per-file push/pull errors to w — stderr in practice,
+// even with -q, so the launchd log shows why the daily job stopped — and
+// returns a non-nil error when there were any, so `pull -q && push -q` halts
+// with a failing exit code. The list is printed exactly once; the pretty
+// summary only counts failures. A failed sync is not a usage mistake, so the
+// usage text is silenced for this error.
+func reportSyncErrors(cmd *cobra.Command, w io.Writer, errs []error) error {
+	if len(errs) == 0 {
+		return nil
+	}
+	if quiet {
+		for _, e := range errs {
+			fmt.Fprintf(w, "codex-sync: %v\n", e)
+		}
+	} else {
+		fmt.Fprintf(w, "\n%sErrors:%s\n", colorYellow, colorReset)
+		for _, e := range errs {
+			fmt.Fprintf(w, "  %s•%s %v\n", colorYellow, colorReset, e)
+		}
+	}
+	cmd.SilenceUsage = true
+	return fmt.Errorf("%d file(s) failed; see above", len(errs))
+}
+
 func initCmd() *cobra.Command {
 	var provider, bucket string
 	var scope string
@@ -485,6 +509,8 @@ skipKeyGen:
 	}
 
 	// Done
+	fmt.Println()
+	printInfo("Codex home: " + config.BaseDir())
 	fmt.Println()
 	fmt.Println(colorGreen + "  Setup complete!" + colorReset)
 	fmt.Println()
@@ -1086,17 +1112,10 @@ func pushCmd() *cobra.Command {
 					if len(parts) > 0 {
 						fmt.Printf("%s✓%s Push complete: %s\n", colorGreen, colorReset, strings.Join(parts, ", "))
 					}
-
-					if len(result.Errors) > 0 {
-						fmt.Printf("\n%sErrors:%s\n", colorYellow, colorReset)
-						for _, e := range result.Errors {
-							fmt.Printf("  %s•%s %v\n", colorYellow, colorReset, e)
-						}
-					}
 				}
 			}
 
-			return nil
+			return reportSyncErrors(cmd, os.Stderr, result.Errors)
 		},
 	}
 
@@ -1140,7 +1159,7 @@ Examples:
 				}
 
 				if hasExisting && !force {
-					return handleFirstPullWithExistingFiles(ctx, syncer, dryRun)
+					return handleFirstPullWithExistingFiles(ctx, cmd, syncer, dryRun)
 				}
 			}
 
@@ -1239,17 +1258,10 @@ Examples:
 							fmt.Printf("  %s•%s %s\n", colorYellow, colorReset, p)
 						}
 					}
-
-					if len(result.Errors) > 0 {
-						fmt.Printf("\n%sErrors:%s\n", colorYellow, colorReset)
-						for _, e := range result.Errors {
-							fmt.Printf("  %s•%s %v\n", colorYellow, colorReset, e)
-						}
-					}
 				}
 			}
 
-			return nil
+			return reportSyncErrors(cmd, os.Stderr, result.Errors)
 		},
 	}
 
@@ -1732,7 +1744,8 @@ Examples:
 			if clearLocal {
 				fmt.Printf("  %s•%s Clear local sync state\n", colorYellow, colorReset)
 			}
-			fmt.Printf("  %s•%s Delete local config and encryption key\n", colorYellow, colorReset)
+			fmt.Printf("  %s•%s Delete local config, encryption key and sync state\n", colorYellow, colorReset)
+			fmt.Printf("  %s•%s Removed files kept in ~/.codex-sync/trash/ are NOT touched\n", colorYellow, colorReset)
 			fmt.Println()
 
 			if !force {
@@ -1787,12 +1800,15 @@ Examples:
 				}
 			}
 
-			// Always clear config and key
-			configDir := config.ConfigDirPath()
-			if err := os.RemoveAll(configDir); err != nil {
-				return fmt.Errorf("failed to remove config directory: %w", err)
+			// Always clear config, key and state — file by file, so the trash
+			// directory (copies pull moved out of the Codex home) survives.
+			removed, err := resetLocalFiles(config.ConfigDirPath())
+			if err != nil {
+				return err
 			}
-			printSuccess("Removed " + configDir)
+			for _, p := range removed {
+				printSuccess("Removed " + p)
+			}
 
 			fmt.Println()
 			printSuccess("Reset complete!")
@@ -1809,6 +1825,25 @@ Examples:
 	cmd.Flags().BoolVar(&force, "force", false, "Skip confirmation prompt")
 
 	return cmd
+}
+
+// resetLocalFiles removes codex-sync's own files (config, key, state) from
+// configDir one at a time rather than deleting the directory, so trash/ — the
+// copies pull moved out of the Codex home — is never touched. Missing files
+// are not an error. Returns the paths it removed.
+func resetLocalFiles(configDir string) ([]string, error) {
+	var removed []string
+	for _, name := range []string{config.ConfigFile, config.AgeKeyFile, config.StateFile} {
+		path := filepath.Join(configDir, name)
+		if err := os.Remove(path); err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			return removed, fmt.Errorf("failed to remove %s: %w", path, err)
+		}
+		removed = append(removed, path)
+	}
+	return removed, nil
 }
 
 // GitHubRelease represents a GitHub release from the API
@@ -2192,15 +2227,17 @@ func hasExistingBaseFiles(cfg *config.Config) (bool, error) {
 
 // handleFirstPullWithExistingFiles handles the case where the user is pulling
 // for the first time but already has local files that could be overwritten
-func handleFirstPullWithExistingFiles(ctx context.Context, syncer *sync.Syncer, dryRun bool) error {
+func handleFirstPullWithExistingFiles(ctx context.Context, cmd *cobra.Command, syncer *sync.Syncer, dryRun bool) error {
 	// Get preview of what would happen
 	preview, err := syncer.PreviewPull(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to preview pull: %w", err)
 	}
 
-	// If nothing would be affected, proceed normally
-	if len(preview.WouldOverwrite) == 0 && len(preview.WouldDownload) == 0 && len(preview.WouldConflict) == 0 {
+	// If nothing would be affected, proceed normally. Merges count: a first
+	// pull whose only work is unioning session_index.jsonl or history.jsonl
+	// must still run rather than report "up to date".
+	if len(preview.WouldOverwrite) == 0 && len(preview.WouldDownload) == 0 && len(preview.WouldConflict) == 0 && len(preview.WouldMerge) == 0 {
 		if !quiet {
 			fmt.Printf("%s✓%s Already up to date\n", colorGreen, colorReset)
 		}
@@ -2223,6 +2260,11 @@ func handleFirstPullWithExistingFiles(ctx context.Context, syncer *sync.Syncer, 
 	// Show files that would be downloaded (new)
 	for _, f := range preview.WouldDownload {
 		fmt.Printf("  %sNEW%s        %s\n", colorGreen, colorReset, f.Path)
+	}
+
+	// Show shared index files that would be unioned with the local copy
+	for _, f := range preview.WouldMerge {
+		fmt.Printf("  %sMERGE%s      %s %s(union of local and remote)%s\n", colorGreen, colorReset, f.Path, colorDim, colorReset)
 	}
 
 	// Show files that would be kept
@@ -2272,12 +2314,12 @@ func handleFirstPullWithExistingFiles(ctx context.Context, syncer *sync.Syncer, 
 		}
 		printSuccess("Backup created: " + backupDir)
 		fmt.Println()
-		return executePull(ctx, syncer)
+		return executePull(ctx, cmd, syncer)
 
 	case 1:
 		// Proceed without backup
 		fmt.Println()
-		return executePull(ctx, syncer)
+		return executePull(ctx, cmd, syncer)
 
 	default:
 		// Abort
@@ -2419,7 +2461,7 @@ func showPullPreview(ctx context.Context, syncer *sync.Syncer) error {
 }
 
 // executePull performs the actual pull operation with progress output
-func executePull(ctx context.Context, syncer *sync.Syncer) error {
+func executePull(ctx context.Context, cmd *cobra.Command, syncer *sync.Syncer) error {
 	if !quiet {
 		syncer.SetProgressFunc(func(event sync.ProgressEvent) {
 			if event.Error != nil {
@@ -2508,17 +2550,10 @@ func executePull(ctx context.Context, syncer *sync.Syncer) error {
 					fmt.Printf("  %s•%s %s\n", colorYellow, colorReset, p)
 				}
 			}
-
-			if len(result.Errors) > 0 {
-				fmt.Printf("\n%sErrors:%s\n", colorYellow, colorReset)
-				for _, e := range result.Errors {
-					fmt.Printf("  %s•%s %v\n", colorYellow, colorReset, e)
-				}
-			}
 		}
 	}
 
-	return nil
+	return reportSyncErrors(cmd, os.Stderr, result.Errors)
 }
 
 func changelogCmd() *cobra.Command {
