@@ -154,41 +154,46 @@ func TestPathMapperValidation(t *testing.T) {
 	}
 }
 
-func TestIsPortableContentPath(t *testing.T) {
+func TestIsPortableContentPathCodex(t *testing.T) {
 	cases := map[string]bool{
-		"history.jsonl":                                           true,
-		"projects/-Users-a-x/sess.jsonl":                          true,
-		"projects/-Users-a-x/memory/notes.md":                     true,
-		"projects/-Users-a-x/sess.jsonl.conflict.20260610-120000": true,
-		"projects/-Users-a-x/img.png":                             false,
-		"settings.json":                                           false,
-		"agents/foo.md":                                           false,
+		"history.jsonl":                       true,
+		"session_index.jsonl":                 true,
+		"config.toml":                         true,
+		"AGENTS.md":                           true,
+		"sessions/2026/01/01/rollout-a.jsonl": true,
+		"sessions/2026/01/01/rollout-a.jsonl.conflict.20260101-000000": true,
+		"archived_sessions/rollout-b.jsonl":                            true,
+		"rules/default.rules":                                          false,
+		"rules/notes.md":                                               true,
+		"skills/foo/SKILL.md":                                          true,
+		"skills/foo/tool.py":                                           false,
+		"skills/foo/config.toml":                                       true,
+		"memories/notes.txt":                                           true,
+		"attachments/abc/goal.md":                                      false,
+		"attachments/pasted-text-attachments.json":                     false,
+		"projects/-Users-alice-app/session.jsonl":                      false,
 	}
-	for in, want := range cases {
-		if got := IsPortableContentPath(in); got != want {
-			t.Errorf("IsPortableContentPath(%q) = %v, want %v", in, got, want)
+	for relPath, want := range cases {
+		if got := IsPortableContentPath(relPath); got != want {
+			t.Errorf("IsPortableContentPath(%q) = %v, want %v", relPath, got, want)
 		}
 	}
 }
 
 // TestCrossDeviceSessionSync simulates two devices with different usernames
-// sharing one bucket: a session pushed from alice's machine must land on
-// bob's machine under bob's encoded project directory with rewritten content.
+// sharing one bucket: a Codex rollout pushed from alice's machine must have
+// its cwd field tokenized to ${HOME} remotely and resolved to bob's home
+// directory on pull.
 func TestCrossDeviceSessionSync(t *testing.T) {
 	syncerA, store, claudeDirA := testSyncer(t)
 	syncerA.paths = mustMapper(t, "/Users/alice", nil)
-	// PathMapper's cross-device rewriting is keyed to projects/<encoded-cwd>/...
-	// specifically (see splitProjectsPath), independent of the default sync
-	// profile. projects/ is no longer synced by default under the Codex
-	// profile, so opt it in explicitly to keep exercising that mechanism.
-	syncerA.cfg.SyncPaths = []string{"projects"}
 
-	sessDir := filepath.Join(claudeDirA, "projects", "-Users-alice-my-app")
+	sessDir := filepath.Join(claudeDirA, "sessions", "2026", "01", "01")
 	if err := os.MkdirAll(sessDir, 0700); err != nil {
 		t.Fatal(err)
 	}
 	content := `{"cwd":"/Users/alice/my-app","type":"user"}` + "\n"
-	if err := os.WriteFile(filepath.Join(sessDir, "sess.jsonl"), []byte(content), 0600); err != nil {
+	if err := os.WriteFile(filepath.Join(sessDir, "rollout-cross.jsonl"), []byte(content), 0600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -196,12 +201,7 @@ func TestCrossDeviceSessionSync(t *testing.T) {
 		t.Fatalf("push: %v", err)
 	}
 
-	wantKey := "projects/${HOME}-my-app/sess.jsonl.age"
-	if _, err := store.Download(context.Background(), wantKey); err != nil {
-		t.Fatalf("expected normalized remote key %s: %v", wantKey, err)
-	}
-
-	// Second device: same bucket and key, different username
+	// Second device: same bucket, different username
 	tmpB := t.TempDir()
 	claudeDirB := filepath.Join(tmpB, ".claude")
 	if err := os.MkdirAll(claudeDirB, 0755); err != nil {
@@ -222,10 +222,10 @@ func TestCrossDeviceSessionSync(t *testing.T) {
 		t.Fatalf("pull errors: %v", result.Errors)
 	}
 
-	localPath := filepath.Join(claudeDirB, "projects", "-Users-bob-my-app", "sess.jsonl")
+	localPath := filepath.Join(claudeDirB, "sessions", "2026", "01", "01", "rollout-cross.jsonl")
 	data, err := os.ReadFile(localPath)
 	if err != nil {
-		t.Fatalf("expected session under bob's project dir: %v", err)
+		t.Fatalf("expected rollout at %s: %v", localPath, err)
 	}
 	want := `{"cwd":"/Users/bob/my-app","type":"user"}` + "\n"
 	if string(data) != want {

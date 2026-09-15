@@ -193,22 +193,37 @@ func (m *PathMapper) ResolveContent(data []byte) []byte {
 	return data
 }
 
+// portableContentRoots are directories whose text files may embed absolute
+// paths (rollout cwd fields, tool output, skill docs).
+var portableContentRoots = []string{"sessions/", "archived_sessions/", "rules/", "skills/", "memories/"}
+
+// portableContentFiles are single files that embed absolute paths
+// (config.toml project trust keys, history and index entries).
+var portableContentFiles = map[string]bool{
+	"history.jsonl":       true,
+	"session_index.jsonl": true,
+	"config.toml":         true,
+	"AGENTS.md":           true,
+}
+
 // IsPortableContentPath reports whether content path translation applies to
-// this relative path: text formats under projects/ plus the prompt history.
-// Conflict copies (path.conflict.<timestamp>) inherit the base path's rule.
+// this relative path. Conflict copies (path.conflict.<timestamp>) inherit the
+// base path's rule. Attachments are user files and are copied verbatim.
 func IsPortableContentPath(relPath string) bool {
 	if i := strings.Index(relPath, ".conflict."); i >= 0 {
 		relPath = relPath[:i]
 	}
-	if relPath == "history.jsonl" {
+	if portableContentFiles[relPath] {
 		return true
 	}
-	if !strings.HasPrefix(relPath, "projects/") {
-		return false
-	}
-	switch path.Ext(relPath) {
-	case ".jsonl", ".json", ".md", ".txt":
-		return true
+	for _, root := range portableContentRoots {
+		if strings.HasPrefix(relPath, root) {
+			switch path.Ext(relPath) {
+			case ".jsonl", ".json", ".md", ".txt", ".toml":
+				return true
+			}
+			return false
+		}
 	}
 	return false
 }
