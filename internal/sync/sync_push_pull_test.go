@@ -196,8 +196,8 @@ func TestPushUploadsNewFiles(t *testing.T) {
 	env := setupTestEnv(t)
 	ctx := context.Background()
 
-	writeFile(t, env.claudeDir, "CLAUDE.md", "# My Settings")
-	writeFile(t, env.claudeDir, "settings.json", `{"theme":"dark"}`)
+	writeFile(t, env.claudeDir, "AGENTS.md", "# My Settings")
+	writeFile(t, env.claudeDir, "config.toml", `{"theme":"dark"}`)
 
 	result, err := env.syncer.Push(ctx)
 	if err != nil {
@@ -227,7 +227,7 @@ func TestPushUploadsModifiedFiles(t *testing.T) {
 	env := setupTestEnv(t)
 	ctx := context.Background()
 
-	writeFile(t, env.claudeDir, "CLAUDE.md", "# V1")
+	writeFile(t, env.claudeDir, "AGENTS.md", "# V1")
 
 	// Initial push
 	result, err := env.syncer.Push(ctx)
@@ -239,7 +239,7 @@ func TestPushUploadsModifiedFiles(t *testing.T) {
 	}
 
 	// Modify the file
-	writeFile(t, env.claudeDir, "CLAUDE.md", "# V2 - modified")
+	writeFile(t, env.claudeDir, "AGENTS.md", "# V2 - modified")
 
 	// Second push
 	result, err = env.syncer.Push(ctx)
@@ -255,7 +255,7 @@ func TestPushDeletesRemovedFiles(t *testing.T) {
 	env := setupTestEnv(t)
 	ctx := context.Background()
 
-	writeFile(t, env.claudeDir, "CLAUDE.md", "# Settings")
+	writeFile(t, env.claudeDir, "AGENTS.md", "# Settings")
 
 	// Push
 	if _, err := env.syncer.Push(ctx); err != nil {
@@ -263,7 +263,7 @@ func TestPushDeletesRemovedFiles(t *testing.T) {
 	}
 
 	// Delete local file
-	_ = os.Remove(filepath.Join(env.claudeDir, "CLAUDE.md"))
+	_ = os.Remove(filepath.Join(env.claudeDir, "AGENTS.md"))
 
 	// Push again
 	result, err := env.syncer.Push(ctx)
@@ -291,7 +291,7 @@ func TestPullDownloadsNewRemoteFiles(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Encrypt failed: %v", err)
 	}
-	if err := env.store.Upload(ctx, "CLAUDE.md.age", encrypted); err != nil {
+	if err := env.store.Upload(ctx, "AGENTS.md.age", encrypted); err != nil {
 		t.Fatalf("Upload to mock failed: %v", err)
 	}
 
@@ -305,7 +305,7 @@ func TestPullDownloadsNewRemoteFiles(t *testing.T) {
 	}
 
 	// Verify local file
-	got := readFile(t, env.claudeDir, "CLAUDE.md")
+	got := readFile(t, env.claudeDir, "AGENTS.md")
 	if got != "# Remote Settings" {
 		t.Errorf("Expected '# Remote Settings', got %q", got)
 	}
@@ -315,7 +315,7 @@ func TestPullSkipsUnchangedFiles(t *testing.T) {
 	env := setupTestEnv(t)
 	ctx := context.Background()
 
-	writeFile(t, env.claudeDir, "CLAUDE.md", "# Synced")
+	writeFile(t, env.claudeDir, "AGENTS.md", "# Synced")
 
 	// Push to establish state
 	if _, err := env.syncer.Push(ctx); err != nil {
@@ -398,7 +398,7 @@ func TestNoConflictWhenOnlyRemoteChanged(t *testing.T) {
 	env := setupTestEnv(t)
 	ctx := context.Background()
 
-	writeFile(t, env.claudeDir, "CLAUDE.md", "# V1")
+	writeFile(t, env.claudeDir, "AGENTS.md", "# V1")
 
 	// Push to establish baseline
 	if _, err := env.syncer.Push(ctx); err != nil {
@@ -412,7 +412,7 @@ func TestNoConflictWhenOnlyRemoteChanged(t *testing.T) {
 		t.Fatalf("Encrypt failed: %v", err)
 	}
 	time.Sleep(10 * time.Millisecond)
-	if err := env.store.Upload(ctx, "CLAUDE.md.age", encrypted); err != nil {
+	if err := env.store.Upload(ctx, "AGENTS.md.age", encrypted); err != nil {
 		t.Fatalf("Upload to mock failed: %v", err)
 	}
 
@@ -429,7 +429,7 @@ func TestNoConflictWhenOnlyRemoteChanged(t *testing.T) {
 		t.Errorf("Expected 1 download, got %d", len(result.Downloaded))
 	}
 
-	got := readFile(t, env.claudeDir, "CLAUDE.md")
+	got := readFile(t, env.claudeDir, "AGENTS.md")
 	if got != "# V2 from other device" {
 		t.Errorf("Expected remote content, got %q", got)
 	}
@@ -476,9 +476,9 @@ func TestPushThenPullRoundTrip(t *testing.T) {
 	}
 
 	// Device A creates files and pushes
-	writeFile(t, deviceADir, "CLAUDE.md", "# Shared config")
-	writeFile(t, deviceADir, "settings.json", `{"theme":"dark","fontSize":14}`)
-	writeFile(t, deviceADir, "agents/helper.json", `{"name":"helper","model":"opus"}`)
+	writeFile(t, deviceADir, "AGENTS.md", "# Shared config")
+	writeFile(t, deviceADir, "config.toml", `{"theme":"dark","fontSize":14}`)
+	writeFile(t, deviceADir, "skills/helper.json", `{"name":"helper","model":"opus"}`)
 
 	ctx := context.Background()
 	resultA, err := syncerA.Push(ctx)
@@ -519,14 +519,14 @@ func TestPushThenPullRoundTrip(t *testing.T) {
 	}
 
 	// Verify content matches
-	if got := readFile(t, deviceBDir, "CLAUDE.md"); got != "# Shared config" {
-		t.Errorf("CLAUDE.md mismatch: %q", got)
+	if got := readFile(t, deviceBDir, "AGENTS.md"); got != "# Shared config" {
+		t.Errorf("AGENTS.md mismatch: %q", got)
 	}
-	if got := readFile(t, deviceBDir, "settings.json"); got != `{"theme":"dark","fontSize":14}` {
-		t.Errorf("settings.json mismatch: %q", got)
+	if got := readFile(t, deviceBDir, "config.toml"); got != `{"theme":"dark","fontSize":14}` {
+		t.Errorf("config.toml mismatch: %q", got)
 	}
-	if got := readFile(t, deviceBDir, "agents/helper.json"); got != `{"name":"helper","model":"opus"}` {
-		t.Errorf("agents/helper.json mismatch: %q", got)
+	if got := readFile(t, deviceBDir, "skills/helper.json"); got != `{"name":"helper","model":"opus"}` {
+		t.Errorf("skills/helper.json mismatch: %q", got)
 	}
 }
 
@@ -623,7 +623,7 @@ func TestPullEmptyRemoteIsNoop(t *testing.T) {
 // 0600 and directories created by a pull are 0700. ~/.claude can contain API
 // keys, prompts, and personal context, so it must not be world-readable.
 //
-// Uses a nested remote path (agents/helper.json) so the pull actually has to
+// Uses a nested remote path (skills/helper.json) so the pull actually has to
 // create the parent directory — os.MkdirAll does not modify the mode of
 // pre-existing directories, and env.claudeDir was created at 0755 by setup.
 func TestPullSetsRestrictivePermissions(t *testing.T) {
@@ -635,7 +635,7 @@ func TestPullSetsRestrictivePermissions(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Encrypt failed: %v", err)
 	}
-	if err := env.store.Upload(ctx, "agents/helper.json.age", encrypted); err != nil {
+	if err := env.store.Upload(ctx, "skills/helper.json.age", encrypted); err != nil {
 		t.Fatalf("Upload to mock failed: %v", err)
 	}
 
@@ -644,7 +644,7 @@ func TestPullSetsRestrictivePermissions(t *testing.T) {
 	}
 
 	// File created by pull must be user-only readable/writable.
-	filePath := filepath.Join(env.claudeDir, "agents/helper.json")
+	filePath := filepath.Join(env.claudeDir, "skills/helper.json")
 	fi, err := os.Stat(filePath)
 	if err != nil {
 		t.Fatalf("Stat file failed: %v", err)
@@ -654,7 +654,7 @@ func TestPullSetsRestrictivePermissions(t *testing.T) {
 	}
 
 	// Directory created by pull must be user-only.
-	dirPath := filepath.Join(env.claudeDir, "agents")
+	dirPath := filepath.Join(env.claudeDir, "skills")
 	di, err := os.Stat(dirPath)
 	if err != nil {
 		t.Fatalf("Stat dir failed: %v", err)

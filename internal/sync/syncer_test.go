@@ -96,8 +96,8 @@ func TestSyncerPush_NewFiles(t *testing.T) {
 	syncer, store, claudeDir := testSyncer(t)
 	ctx := context.Background()
 
-	createTestFile(t, claudeDir, "CLAUDE.md", "# My Settings")
-	createTestFile(t, claudeDir, "settings.json", `{"theme":"dark"}`)
+	createTestFile(t, claudeDir, "AGENTS.md", "# My Settings")
+	createTestFile(t, claudeDir, "config.toml", `{"theme":"dark"}`)
 
 	result, err := syncer.Push(ctx)
 	if err != nil {
@@ -118,7 +118,7 @@ func TestSyncerPush_NoChanges(t *testing.T) {
 	syncer, _, claudeDir := testSyncer(t)
 	ctx := context.Background()
 
-	createTestFile(t, claudeDir, "CLAUDE.md", "# My Settings")
+	createTestFile(t, claudeDir, "AGENTS.md", "# My Settings")
 
 	// First push
 	_, err := syncer.Push(ctx)
@@ -144,7 +144,7 @@ func TestSyncerPull_DownloadsNewFiles(t *testing.T) {
 	ctx := context.Background()
 
 	// Create a file on syncer1 and push
-	createTestFile(t, claudeDir1, "CLAUDE.md", "# Shared Settings")
+	createTestFile(t, claudeDir1, "AGENTS.md", "# Shared Settings")
 	_, err := syncer1.Push(ctx)
 	if err != nil {
 		t.Fatalf("Push from syncer1 failed: %v", err)
@@ -176,7 +176,7 @@ func TestSyncerPull_DownloadsNewFiles(t *testing.T) {
 	}
 
 	// Verify the file was downloaded
-	data, err := os.ReadFile(filepath.Join(claudeDir2, "CLAUDE.md"))
+	data, err := os.ReadFile(filepath.Join(claudeDir2, "AGENTS.md"))
 	if err != nil {
 		t.Fatalf("Failed to read downloaded file: %v", err)
 	}
@@ -191,7 +191,7 @@ func TestSyncerStatus_DetectsNewFiles(t *testing.T) {
 	syncer, _, claudeDir := testSyncer(t)
 	ctx := context.Background()
 
-	createTestFile(t, claudeDir, "CLAUDE.md", "# New file")
+	createTestFile(t, claudeDir, "AGENTS.md", "# New file")
 
 	changes, err := syncer.Status(ctx)
 	if err != nil {
@@ -209,7 +209,7 @@ func TestSyncerStatus_NoChangesAfterPush(t *testing.T) {
 	syncer, _, claudeDir := testSyncer(t)
 	ctx := context.Background()
 
-	createTestFile(t, claudeDir, "CLAUDE.md", "# Settings")
+	createTestFile(t, claudeDir, "AGENTS.md", "# Settings")
 
 	_, err := syncer.Push(ctx)
 	if err != nil {
@@ -243,7 +243,7 @@ func TestSyncerHasState(t *testing.T) {
 	}
 
 	// After push, should have state
-	createTestFile(t, claudeDir, "CLAUDE.md", "# Settings")
+	createTestFile(t, claudeDir, "AGENTS.md", "# Settings")
 	_, err := syncer.Push(ctx)
 	if err != nil {
 		t.Fatalf("Push failed: %v", err)
@@ -262,7 +262,7 @@ func TestSyncerSetProgressFunc(t *testing.T) {
 		called.Add(1)
 	})
 
-	createTestFile(t, claudeDir, "CLAUDE.md", "# Settings")
+	createTestFile(t, claudeDir, "AGENTS.md", "# Settings")
 	_, err := syncer.Push(ctx)
 	if err != nil {
 		t.Fatalf("Push failed: %v", err)

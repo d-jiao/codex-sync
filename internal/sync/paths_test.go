@@ -177,6 +177,11 @@ func TestIsPortableContentPath(t *testing.T) {
 func TestCrossDeviceSessionSync(t *testing.T) {
 	syncerA, store, claudeDirA := testSyncer(t)
 	syncerA.paths = mustMapper(t, "/Users/alice", nil)
+	// PathMapper's cross-device rewriting is keyed to projects/<encoded-cwd>/...
+	// specifically (see splitProjectsPath), independent of the default sync
+	// profile. projects/ is no longer synced by default under the Codex
+	// profile, so opt it in explicitly to keep exercising that mechanism.
+	syncerA.cfg.SyncPaths = []string{"projects"}
 
 	sessDir := filepath.Join(claudeDirA, "projects", "-Users-alice-my-app")
 	if err := os.MkdirAll(sessDir, 0700); err != nil {

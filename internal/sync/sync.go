@@ -465,6 +465,10 @@ func (s *Syncer) uploadFile(ctx context.Context, relativePath string) error {
 // downloadFile downloads and decrypts a file from remote storage.
 // If originalMtime is non-nil, the file's modification time will be restored to that value.
 func (s *Syncer) downloadFile(ctx context.Context, relativePath, remoteKey string, originalMtime *time.Time) error {
+	if config.IsProtected(relativePath) {
+		return fmt.Errorf("refusing to write protected file %s", relativePath)
+	}
+
 	// Download
 	encrypted, err := s.storage.Download(ctx, remoteKey)
 	if err != nil {

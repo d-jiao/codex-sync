@@ -13,7 +13,7 @@ import (
 func TestScopedSyncPaths(t *testing.T) {
 	t.Run("sessions scope is limited to portable session data", func(t *testing.T) {
 		got := ScopedSyncPaths("sessions")
-		want := []string{"projects", "history.jsonl", "tasks", "plans"}
+		want := []string{"sessions", "archived_sessions", "session_index.jsonl", "history.jsonl", "attachments"}
 		if !reflect.DeepEqual(got, want) {
 			t.Errorf("ScopedSyncPaths(\"sessions\") = %v, want %v", got, want)
 		}
@@ -199,34 +199,6 @@ func TestExists(t *testing.T) {
 	}
 }
 
-func TestSyncPaths(t *testing.T) {
-	// Verify SyncPaths contains expected entries
-	expectedPaths := map[string]bool{
-		"CLAUDE.md":           false,
-		"settings.json":       false,
-		"settings.local.json": false,
-		"agents":              false,
-		"commands":            false,
-		"skills":              false,
-		"plugins":             false,
-		"projects":            false,
-		"history.jsonl":       false,
-		"rules":               false,
-	}
-
-	for _, path := range SyncPaths {
-		if _, ok := expectedPaths[path]; ok {
-			expectedPaths[path] = true
-		}
-	}
-
-	for path, found := range expectedPaths {
-		if !found {
-			t.Errorf("Expected path '%s' not found in SyncPaths", path)
-		}
-	}
-}
-
 func TestGetStorageConfig_NewFormat(t *testing.T) {
 	cfg := &Config{
 		Storage: &storage.StorageConfig{
@@ -346,7 +318,7 @@ func TestIsExcluded(t *testing.T) {
 		{"exclude dir with /**", "plugins/cache/foo/bar.js", []string{"plugins/cache/**"}, true},
 		{"exclude dir itself", "plugins/cache", []string{"plugins/cache/**"}, true},
 		{"exclude nested dir", "plugins/marketplaces/repo/file.txt", []string{"plugins/marketplaces/**"}, true},
-		{"non-matching dir", "plugins/installed.json", []string{"plugins/cache/**"}, false},
+		{"non-matching dir", "workspace/installed.json", []string{"workspace/cache/**"}, false},
 
 		// Filename glob patterns
 		{"exclude by extension", "projects/foo/debug.tmp", []string{"*.tmp"}, true},
@@ -371,7 +343,7 @@ func TestIsExcluded(t *testing.T) {
 		{"nil-like empty", "anything.txt", nil, false},
 
 		// Edge cases
-		{"partial name no match", "plugins/cachedata/file.txt", []string{"plugins/cache/**"}, false},
+		{"partial name no match", "workspace/cachedata/file.txt", []string{"workspace/cache/**"}, false},
 		{"shell-snapshots", "shell-snapshots/snap.json", []string{"shell-snapshots/**"}, true},
 		{"telemetry dir", "telemetry/data.json", []string{"telemetry/**"}, true},
 
@@ -434,7 +406,7 @@ func TestGetEffectiveSyncPaths(t *testing.T) {
 		},
 		{
 			name:      "custom paths are narrowed to the sessions scope",
-			syncPaths: []string{"projects", "plugins", "CLAUDE.md"},
+			syncPaths: []string{"sessions", "plugins", "AGENTS.md"},
 			scope:     ScopeSessions,
 			wantLen:   1,
 		},
@@ -546,5 +518,73 @@ func TestBaseDirDefaultsToDotCodex(t *testing.T) {
 	}
 	if want := filepath.Join(home, ".codex"); got != want {
 		t.Errorf("BaseDirE() = %q, want %q", got, want)
+	}
+}
+
+func TestSyncPathsAreTheCodexProfile(t *testing.T) {
+	wantFull := []string{"sessions", "archived_sessions", "session_index.jsonl", "history.jsonl", "attachments", "config.toml", "rules", "skills", "memories", "AGENTS.md"}
+	wantSessions := []string{"sessions", "archived_sessions", "session_index.jsonl", "history.jsonl", "attachments"}
+	if !reflect.DeepEqual(SyncPaths, wantFull) {
+		t.Errorf("SyncPaths = %v, want %v", SyncPaths, wantFull)
+	}
+	if got := ScopedSyncPaths(ScopeSessions); !reflect.DeepEqual(got, wantSessions) {
+		t.Errorf("ScopedSyncPaths(sessions) = %v, want %v", got, wantSessions)
+	}
+	if got := ScopedSyncPaths(""); !reflect.DeepEqual(got, wantFull) {
+		t.Errorf("ScopedSyncPaths(\"\") = %v, want %v", got, wantFull)
+	}
+}
+
+func TestHardExcludesApplyWithoutUserConfig(t *testing.T) {
+	cfg := &Config{}
+	excluded := []string{
+		"auth.json", "installation_id",
+		"state_5.sqlite", "state_5.sqlite-wal", "logs_2.sqlite-shm", "thread_history_1.sqlite",
+		"sqlite/codex-dev.db", "sqlite/codex-dev.db-wal",
+		"logs/today.log", "logs_2.sqlite",
+		".codex-global-state.json", ".codex-global-state.json.bak", "..codex-global-state.json.tmp-1-abc",
+		"plugins/x/y.js", "packages/standalone/current/bin/codex", "cache/models", ".tmp/x", "tmp/x",
+		"ipc/sock", "thread-writer-locks/a", "shell_snapshots/b", "models_cache.json", "computer-use/c",
+		"vendor_imports/d", "browser/e", "node_repl/f", "process_manager/g", "dictation-history/h",
+		"transcription-history.jsonl", "version.json", "worktrees/repo/file.go",
+		"config.toml.app-full.bak", "sessions/2026/01/01/rollout-x.jsonl.tmp-123",
+	}
+	for _, p := range excluded {
+		if !cfg.IsExcluded(p) {
+			t.Errorf("%s should be hard-excluded", p)
+		}
+		if !IsHardExcluded(p) {
+			t.Errorf("IsHardExcluded(%s) should be true", p)
+		}
+	}
+	included := []string{
+		"sessions/2026/01/01/rollout-x.jsonl", "archived_sessions/rollout-y.jsonl", "session_index.jsonl",
+		"history.jsonl", "attachments/abc/goal.md", "config.toml", "rules/default.rules",
+		"skills/foo/SKILL.md", "memories/notes.md", "AGENTS.md",
+	}
+	for _, p := range included {
+		if cfg.IsExcluded(p) {
+			t.Errorf("%s should be syncable", p)
+		}
+	}
+}
+
+func TestUserExcludesStillApply(t *testing.T) {
+	cfg := &Config{Exclude: []string{"skills/private/**"}}
+	if !cfg.IsExcluded("skills/private/SKILL.md") {
+		t.Error("user exclude pattern should still apply")
+	}
+}
+
+func TestProtectedPaths(t *testing.T) {
+	for _, p := range []string{"auth.json", "installation_id"} {
+		if !IsProtected(p) {
+			t.Errorf("IsProtected(%s) should be true", p)
+		}
+	}
+	for _, p := range []string{"sessions/x.jsonl", "config.toml", "auth.json.bak"} {
+		if IsProtected(p) {
+			t.Errorf("IsProtected(%s) should be false", p)
+		}
 	}
 }

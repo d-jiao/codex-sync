@@ -65,7 +65,7 @@ func TestAddPathRemovesConflictingExcludes(t *testing.T) {
 }
 
 func TestRemovePath(t *testing.T) {
-	m := NewManager([]string{"CLAUDE.md", "custom"}, nil, "/tmp/test", config.ScopeFull)
+	m := NewManager([]string{"AGENTS.md", "custom"}, nil, "/tmp/test", config.ScopeFull)
 
 	// Remove non-existent
 	result := m.Remove("nonexistent")
@@ -86,13 +86,13 @@ func TestRemovePath(t *testing.T) {
 	}
 
 	// Remove default path
-	m = NewManager([]string{"CLAUDE.md"}, nil, "/tmp/test", config.ScopeFull)
-	result = m.Remove("CLAUDE.md")
+	m = NewManager([]string{"AGENTS.md"}, nil, "/tmp/test", config.ScopeFull)
+	result = m.Remove("AGENTS.md")
 	if !result.Removed {
 		t.Error("Expected Removed=true")
 	}
 	if !result.IsDefault {
-		t.Error("CLAUDE.md is a default path")
+		t.Error("AGENTS.md is a default path")
 	}
 	if result.ExcludeAdded == "" {
 		t.Error("Default path removal should add exclude")
@@ -104,21 +104,21 @@ func TestRemoveDefaultPathAddsExclude(t *testing.T) {
 	claudeDir := filepath.Join(tmpDir, ".claude")
 
 	// Create a directory to test dir detection
-	agentsDir := filepath.Join(claudeDir, "agents")
-	if err := os.MkdirAll(agentsDir, 0755); err != nil {
+	skillsDir := filepath.Join(claudeDir, "skills")
+	if err := os.MkdirAll(skillsDir, 0755); err != nil {
 		t.Fatal(err)
 	}
 
 	m := NewManager(nil, nil, claudeDir, config.ScopeFull)
 
-	// Remove 'agents' (a directory)
-	result := m.Remove("agents")
-	if result.ExcludeAdded != "agents/*" {
-		t.Errorf("Expected exclude 'agents/*', got %q", result.ExcludeAdded)
+	// Remove 'skills' (a directory)
+	result := m.Remove("skills")
+	if result.ExcludeAdded != "skills/*" {
+		t.Errorf("Expected exclude 'skills/*', got %q", result.ExcludeAdded)
 	}
 
 	// Verify exclude was added
-	if !m.HasExclude("agents/*") {
+	if !m.HasExclude("skills/*") {
 		t.Error("Exclude should be in list")
 	}
 }
@@ -188,11 +188,11 @@ func TestReset(t *testing.T) {
 func TestIsDefault(t *testing.T) {
 	m := NewManager(nil, nil, "/tmp/test", config.ScopeFull)
 
-	if !m.IsDefault("CLAUDE.md") {
-		t.Error("CLAUDE.md should be a default")
+	if !m.IsDefault("AGENTS.md") {
+		t.Error("AGENTS.md should be a default")
 	}
-	if !m.IsDefault("settings.json") {
-		t.Error("settings.json should be a default")
+	if !m.IsDefault("config.toml") {
+		t.Error("config.toml should be a default")
 	}
 	if m.IsDefault("custom-path") {
 		t.Error("custom-path should not be a default")
@@ -221,7 +221,7 @@ func TestStatus(t *testing.T) {
 	}
 
 	// Remove default and check removed defaults tracking
-	m = NewManager(nil, []string{"CLAUDE.md/*"}, "/tmp/test", config.ScopeFull)
+	m = NewManager(nil, []string{"AGENTS.md/*"}, "/tmp/test", config.ScopeFull)
 	status = m.Status()
 	if len(status.RemovedDefaults) != 1 {
 		t.Errorf("Expected 1 removed default, got %d", len(status.RemovedDefaults))

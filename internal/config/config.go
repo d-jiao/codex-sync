@@ -67,32 +67,76 @@ type Config struct {
 	StateDirOverride string `yaml:"-"`
 }
 
-// SyncPaths defines which paths under ~/.claude to sync in the default "full" scope.
+// SyncPaths is the "full" scope: everything under the Codex home that is
+// portable user state. Rollout files (sessions/, archived_sessions/) are the
+// source of truth for conversations; Codex rebuilds its SQLite indexes from
+// them (spike, 2026-09-15), so no database is ever synced.
 var SyncPaths = []string{
-	"CLAUDE.md",
-	"settings.json",
-	"settings.local.json",
-	"agents",
-	"commands",
-	"skills",
-	"plugins",
-	"projects",
-	"plans",
-	"tasks",
+	"sessions",
+	"archived_sessions",
+	"session_index.jsonl",
 	"history.jsonl",
+	"attachments",
+	"config.toml",
 	"rules",
-	"workflows",
+	"skills",
+	"memories",
+	"AGENTS.md",
 }
 
-// SessionSyncPaths is the subset synced in the "sessions" scope: portable,
-// high-value conversation data and its per-project work state. It deliberately
-// excludes plugins/ (which bundles non-portable node_modules and .venv trees),
-// along with machine-specific settings, skills, agents, and commands.
+// SessionSyncPaths is the "sessions" scope: conversation data only — the
+// rollouts, their names (session_index.jsonl), prompt history and attachments.
 var SessionSyncPaths = []string{
-	"projects",
+	"sessions",
+	"archived_sessions",
+	"session_index.jsonl",
 	"history.jsonl",
-	"tasks",
-	"plans",
+	"attachments",
+}
+
+// HardExcludes always apply, even when a user lists a parent directory (or ".")
+// in sync_paths. They cover identity files, every SQLite database (derived or
+// machine-local), runtime state, caches, logs and scratch files. Patterns use
+// the same matching rules as user excludes (see matchExcludePattern).
+var HardExcludes = []string{
+	// identity — also protected, see ProtectedPaths
+	"auth.json", "installation_id",
+	// databases
+	"*.sqlite", "*.sqlite-wal", "*.sqlite-shm", "*.db", "*.db-wal", "*.db-shm", "sqlite",
+	// runtime state, caches, logs
+	"logs", "logs*", ".codex-global-state.json*", "..codex-global-state.json*",
+	"plugins", "packages", "cache", ".tmp", "tmp", "ipc", "thread-writer-locks",
+	"shell_snapshots", "models_cache.json", "computer-use", "vendor_imports", "browser",
+	"node_repl", "process_manager", "dictation-history", "transcription-history.jsonl",
+	"version.json", "worktrees",
+	// scratch files
+	"*.bak", "*.tmp-*",
+}
+
+// ProtectedPaths are never uploaded and never written by pull, regardless of
+// configuration: they identify this machine's login and installation.
+var ProtectedPaths = []string{"auth.json", "installation_id"}
+
+// IsHardExcluded reports whether relPath matches a HardExcludes pattern.
+func IsHardExcluded(relPath string) bool {
+	relPath = filepath.ToSlash(relPath)
+	for _, pattern := range HardExcludes {
+		if matchExcludePattern(pattern, relPath) {
+			return true
+		}
+	}
+	return false
+}
+
+// IsProtected reports whether relPath is one of ProtectedPaths (exact match).
+func IsProtected(relPath string) bool {
+	relPath = filepath.ToSlash(relPath)
+	for _, p := range ProtectedPaths {
+		if relPath == p {
+			return true
+		}
+	}
+	return false
 }
 
 // ScopedSyncPaths returns the sync path set for the given scope. "sessions"
@@ -304,45 +348,43 @@ func (c *Config) GetEffectiveSyncPaths() []string {
 	return within
 }
 
-// IsExcluded returns true if the given relative path matches any exclude pattern.
-// Patterns support:
-//   - Full doublestar glob syntax including ** for recursive matching
-//   - Examples: "**/.git/**", "*.tmp", "plugins/cache/**", "projects/*/node_modules/**"
-//   - Directory prefix (e.g. "plugins/marketplace" matches everything under it)
-//   - Filename glob (e.g. "*.tmp" matches "foo/bar/file.tmp")
+// IsExcluded returns true if the given relative path is hard-excluded or
+// matches a user exclude pattern.
 func (c *Config) IsExcluded(relPath string) bool {
-	// Normalize path separators for consistent matching
 	relPath = filepath.ToSlash(relPath)
-
+	if IsHardExcluded(relPath) {
+		return true
+	}
 	for _, pattern := range c.Exclude {
-		// Normalize pattern separators
-		pattern = filepath.ToSlash(pattern)
-
-		// Use doublestar for full glob matching including ** support
-		matched, err := doublestar.Match(pattern, relPath)
-		if err == nil && matched {
+		if matchExcludePattern(filepath.ToSlash(pattern), relPath) {
 			return true
 		}
+	}
+	return false
+}
 
-		// Try glob match on filename only (for patterns like "*.tmp")
-		// but only if the pattern doesn't contain path separators
-		if !strings.Contains(pattern, "/") && (strings.Contains(pattern, "*") || strings.Contains(pattern, "?")) {
-			if matched, _ := doublestar.Match(pattern, filepath.Base(relPath)); matched {
-				return true
-			}
+// matchExcludePattern applies one exclude pattern to a slash-separated relative
+// path. Patterns support:
+//   - full doublestar glob syntax including ** (e.g. "**/.git/**", "plugins/cache/**")
+//   - filename globs without a separator (e.g. "*.tmp" matches "foo/bar/file.tmp")
+//   - plain names as a directory prefix or exact match (e.g. "plugins" matches
+//     "plugins" and everything under "plugins/")
+func matchExcludePattern(pattern, relPath string) bool {
+	if matched, err := doublestar.Match(pattern, relPath); err == nil && matched {
+		return true
+	}
+	hasGlob := strings.ContainsAny(pattern, "*?")
+	if hasGlob && !strings.Contains(pattern, "/") {
+		if matched, _ := doublestar.Match(pattern, filepath.Base(relPath)); matched {
+			return true
 		}
-
-		// Also match if the path starts with the pattern as a directory prefix
-		// This lets "plugins/marketplace" exclude everything under that dir
-		if !strings.Contains(pattern, "*") && !strings.Contains(pattern, "?") {
-			if len(relPath) > len(pattern) && relPath[:len(pattern)] == pattern &&
-				relPath[len(pattern)] == '/' {
-				return true
-			}
-			// Exact match for non-glob patterns
-			if relPath == pattern {
-				return true
-			}
+	}
+	if !hasGlob {
+		if relPath == pattern {
+			return true
+		}
+		if len(relPath) > len(pattern) && strings.HasPrefix(relPath, pattern) && relPath[len(pattern)] == '/' {
+			return true
 		}
 	}
 	return false

@@ -46,10 +46,10 @@ func TestSyncerScopeCeilingBlocksPluginsLeak(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "plugins", "node_modules", "big.js"), []byte("x"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.MkdirAll(filepath.Join(dir, "projects"), 0700); err != nil {
+	if err := os.MkdirAll(filepath.Join(dir, "sessions", "2026", "01", "01"), 0700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, "projects", "a.jsonl"), []byte("x"), 0600); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "sessions", "2026", "01", "01", "a.jsonl"), []byte("x"), 0600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -69,7 +69,7 @@ func TestSyncerScopeCeilingBlocksPluginsLeak(t *testing.T) {
 			t.Fatalf("sessions scope uploaded plugins/: %v", sortedKeys(got))
 		}
 	}
-	if _, ok := got["projects/a.jsonl"]; !ok {
+	if _, ok := got["sessions/2026/01/01/a.jsonl"]; !ok {
 		t.Errorf("in-scope path missing: %v", sortedKeys(got))
 	}
 }

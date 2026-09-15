@@ -69,8 +69,8 @@ func TestAddRejectsOutOfScopePathUnderSessions(t *testing.T) {
 	}
 
 	// An in-scope path is still addable.
-	if got := m.Add("projects"); got.OutOfScope {
-		t.Error("projects is within sessions scope and should be addable")
+	if got := m.Add("sessions"); got.OutOfScope {
+		t.Error("sessions is within sessions scope and should be addable")
 	}
 }
 

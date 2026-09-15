@@ -20,11 +20,11 @@ func TestCreateBackupSetsRestrictivePermissions(t *testing.T) {
 	// Populate the Codex base dir with a file inside a syncable subdirectory so that
 	// createBackup also creates a nested directory we can stat.
 	claudeDir := config.BaseDir()
-	agentsDir := filepath.Join(claudeDir, "agents")
-	if err := os.MkdirAll(agentsDir, 0700); err != nil {
-		t.Fatalf("Failed to create agents dir: %v", err)
+	skillsDir := filepath.Join(claudeDir, "skills")
+	if err := os.MkdirAll(skillsDir, 0700); err != nil {
+		t.Fatalf("Failed to create skills dir: %v", err)
 	}
-	helperPath := filepath.Join(agentsDir, "helper.json")
+	helperPath := filepath.Join(skillsDir, "helper.json")
 	if err := os.WriteFile(helperPath, []byte(`{"name":"helper"}`), 0600); err != nil {
 		t.Fatalf("Failed to create helper.json: %v", err)
 	}
@@ -44,17 +44,17 @@ func TestCreateBackupSetsRestrictivePermissions(t *testing.T) {
 	}
 
 	// Nested directory created during backup must be 0700.
-	backupAgents := filepath.Join(backupDir, "agents")
-	di, err := os.Stat(backupAgents)
+	backupSkills := filepath.Join(backupDir, "skills")
+	di, err := os.Stat(backupSkills)
 	if err != nil {
-		t.Fatalf("Stat backup agents dir failed: %v", err)
+		t.Fatalf("Stat backup skills dir failed: %v", err)
 	}
 	if got := di.Mode().Perm(); got != 0700 {
 		t.Errorf("Expected backup nested dir mode 0700, got %o", got)
 	}
 
 	// Backed-up file must be 0600.
-	backupFile := filepath.Join(backupDir, "agents", "helper.json")
+	backupFile := filepath.Join(backupDir, "skills", "helper.json")
 	fi, err := os.Stat(backupFile)
 	if err != nil {
 		t.Fatalf("Stat backup file failed: %v", err)
