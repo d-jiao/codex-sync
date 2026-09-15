@@ -44,3 +44,6 @@ Thumbs.db
 
 # Claude Code worktrees
 .claude/worktrees/
+
+# superpowers SDD workspace (ledger, briefs, review packages)
+.superpowers/
