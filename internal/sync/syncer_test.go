@@ -15,11 +15,11 @@ import (
 func testSyncer(t *testing.T) (*Syncer, *mockStorage, string) {
 	t.Helper()
 	tmpDir := t.TempDir()
-	claudeDir := filepath.Join(tmpDir, ".claude")
+	claudeDir := filepath.Join(tmpDir, ".codex")
 	stateDir := filepath.Join(tmpDir, ".codex-sync")
 
 	if err := os.MkdirAll(claudeDir, 0755); err != nil {
-		t.Fatalf("Failed to create claude dir: %v", err)
+		t.Fatalf("Failed to create base dir: %v", err)
 	}
 	if err := os.MkdirAll(stateDir, 0700); err != nil {
 		t.Fatalf("Failed to create state dir: %v", err)
@@ -152,7 +152,7 @@ func TestSyncerPull_DownloadsNewFiles(t *testing.T) {
 
 	// Create syncer2 sharing the same storage and encryptor
 	tmpDir2 := t.TempDir()
-	claudeDir2 := filepath.Join(tmpDir2, ".claude")
+	claudeDir2 := filepath.Join(tmpDir2, ".codex")
 	stateDir2 := filepath.Join(tmpDir2, ".codex-sync")
 	if err := os.MkdirAll(claudeDir2, 0755); err != nil {
 		t.Fatalf("Failed to create claudeDir2: %v", err)

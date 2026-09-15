@@ -101,7 +101,7 @@ func TestRemovePath(t *testing.T) {
 
 func TestRemoveDefaultPathAddsExclude(t *testing.T) {
 	tmpDir := t.TempDir()
-	claudeDir := filepath.Join(tmpDir, ".claude")
+	claudeDir := filepath.Join(tmpDir, ".codex")
 
 	// Create a directory to test dir detection
 	skillsDir := filepath.Join(claudeDir, "skills")
@@ -252,7 +252,7 @@ func TestHasExclude(t *testing.T) {
 
 func TestIntegrationWorkflow(t *testing.T) {
 	tmpDir := t.TempDir()
-	claudeDir := filepath.Join(tmpDir, ".claude")
+	claudeDir := filepath.Join(tmpDir, ".codex")
 	if err := os.MkdirAll(claudeDir, 0755); err != nil {
 		t.Fatal(err)
 	}

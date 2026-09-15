@@ -75,12 +75,12 @@ func TestSyncerScopeCeilingBlocksPluginsLeak(t *testing.T) {
 }
 
 // TestGetLocalFilesRejectsTraversingSyncPath ensures a sync_paths entry cannot
-// walk outside ~/.claude. Sync paths became user-controlled input once the
+// walk outside ~/.codex. Sync paths became user-controlled input once the
 // override was honored, and a traversing entry would otherwise turn files like
 // ~/.ssh/id_rsa into remote objects.
 func TestGetLocalFilesRejectsTraversingSyncPath(t *testing.T) {
 	root := t.TempDir()
-	claudeDir := filepath.Join(root, ".claude")
+	claudeDir := filepath.Join(root, ".codex")
 	if err := os.MkdirAll(claudeDir, 0700); err != nil {
 		t.Fatal(err)
 	}

@@ -107,6 +107,64 @@ func TestWriteFileAtomicCreatesParentAndSetsPerm(t *testing.T) {
 	}
 }
 
+// mergeBothWays merges (local, remote) and (remote, local) and fails unless
+// both devices would end up with identical bytes.
+func mergeBothWays(t *testing.T, relPath, a, b string) string {
+	t.Helper()
+	ab, err := MergeJSONL(relPath, []byte(a), []byte(b))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ba, err := MergeJSONL(relPath, []byte(b), []byte(a))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(ab, ba) {
+		t.Fatalf("merge depends on arrival order:\n(a,b) =\n%s\n(b,a) =\n%s", ab, ba)
+	}
+	return string(ab)
+}
+
+func TestMergeSessionIndexTieBreaksOnBytesNotArrivalOrder(t *testing.T) {
+	// Same id, same updated_at, different content: neither is "later", so the
+	// byte-wise greater line wins on both devices.
+	lo := `{"id":"t1","thread_name":"alpha","updated_at":"2026-09-01T10:00:00.000000Z"}` + "\n"
+	hi := `{"id":"t1","thread_name":"omega","updated_at":"2026-09-01T10:00:00.000000Z"}` + "\n"
+	if got := mergeBothWays(t, SessionIndexFile, lo, hi); got != hi {
+		t.Errorf("merge =\n%s\nwant\n%s", got, hi)
+	}
+}
+
+func TestMergeSessionIndexOrdersEqualTimesByID(t *testing.T) {
+	// Equal instants written differently compare equal as times; the output
+	// order must then come from the id, not from which device merged.
+	t2 := `{"id":"t2","thread_name":"beta","updated_at":"2026-09-01T10:00:00Z"}` + "\n"
+	t1 := `{"id":"t1","thread_name":"alpha","updated_at":"2026-09-01T10:00:00.000000Z"}` + "\n"
+	if got := mergeBothWays(t, SessionIndexFile, t2, t1); got != t1+t2 {
+		t.Errorf("merge =\n%s\nwant\n%s", got, t1+t2)
+	}
+}
+
+func TestMergeHistoryTieBreaksOnBytesNotArrivalOrder(t *testing.T) {
+	a := `{"session_id":"s","ts":1700000001,"text":"zeta"}` + "\n"
+	b := `{"session_id":"s","ts":1700000001,"text":"alpha"}` + "\n"
+	if got := mergeBothWays(t, HistoryFile, a, b); got != b+a {
+		t.Errorf("merge =\n%s\nwant\n%s", got, b+a)
+	}
+}
+
+func TestMergeUnparsableLinesConvergeOnBothDevices(t *testing.T) {
+	h := `{"session_id":"s","ts":1700000001,"text":"first"}` + "\n"
+	got := mergeBothWays(t, HistoryFile, h+"garbage-b\n", "garbage-a\n")
+	if want := h + "garbage-a\ngarbage-b\n"; got != want {
+		t.Errorf("merge =\n%s\nwant\n%s", got, want)
+	}
+	idx := mergeBothWays(t, SessionIndexFile, idxA+"not json 2\n", "not json 1\n"+idxA)
+	if want := idxA + "not json 1\nnot json 2\n"; idx != want {
+		t.Errorf("merge =\n%s\nwant\n%s", idx, want)
+	}
+}
+
 func TestMergeHistoryKeepsUnparsableLinesAtEnd(t *testing.T) {
 	h := `{"session_id":"s","ts":1700000001,"text":"first"}` + "\n"
 	got, err := MergeJSONL(HistoryFile, []byte("garbage\n"+h), []byte("garbage\n"))

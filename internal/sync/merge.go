@@ -33,9 +33,12 @@ func IsMergeablePath(relPath string) bool {
 }
 
 // MergeJSONL returns the union of two copies of a mergeable file. The result is
-// deterministic and idempotent: merging a file with itself, or merging twice,
-// yields identical bytes. Lines that are not JSON objects are preserved verbatim
-// (once each) after the merged entries, in first-seen order.
+// deterministic, idempotent and symmetric: merging a file with itself, merging
+// twice, or merging the same two copies in either order yields identical bytes,
+// so both devices converge. Ties (same id and equal updated_at; equal ts) are
+// broken on the raw line bytes, never on which copy was local. Lines that are
+// not JSON objects are preserved verbatim (once each) after the merged entries,
+// in byte order.
 func MergeJSONL(relPath string, local, remote []byte) ([]byte, error) {
 	switch relPath {
 	case SessionIndexFile:
@@ -121,26 +124,39 @@ func mergeSessionIndex(local, remote []byte) []byte {
 			byID[id] = entry{l.raw, updated}
 			continue
 		}
-		if laterTimestamp(updated, cur.updated) {
+		// Latest updated_at wins; on an exact tie the byte-wise greater line
+		// does, so the winner does not depend on which copy was local.
+		if laterTimestamp(updated, cur.updated) ||
+			(!laterTimestamp(cur.updated, updated) && bytes.Compare(l.raw, cur.raw) > 0) {
 			byID[id] = entry{l.raw, updated}
 		}
 	}
 
-	// Ascending updated_at, id as the tie-breaker, so the output is stable.
-	sort.SliceStable(ids, func(i, j int) bool {
+	// Ascending updated_at; equal instants (however written) order by id.
+	sort.Slice(ids, func(i, j int) bool {
 		a, b := byID[ids[i]].updated, byID[ids[j]].updated
-		if a == b {
-			return ids[i] < ids[j]
+		if laterTimestamp(b, a) {
+			return true
 		}
-		return laterTimestamp(b, a)
+		if laterTimestamp(a, b) {
+			return false
+		}
+		return ids[i] < ids[j]
 	})
 
 	out := make([][]byte, 0, len(ids)+len(other))
 	for _, id := range ids {
 		out = append(out, byID[id].raw)
 	}
-	out = append(out, other...)
+	out = append(out, sortedLines(other)...)
 	return joinJSONL(out)
+}
+
+// sortedLines orders distinct raw lines byte-wise so their position never
+// depends on which copy they came from.
+func sortedLines(lines [][]byte) [][]byte {
+	sort.Slice(lines, func(i, j int) bool { return bytes.Compare(lines[i], lines[j]) < 0 })
+	return lines
 }
 
 func mergeHistory(local, remote []byte) []byte {
@@ -148,7 +164,6 @@ func mergeHistory(local, remote []byte) []byte {
 		raw   []byte
 		ts    float64
 		hasTS bool
-		seq   int
 	}
 	var entries []entry
 	seen := map[string]bool{}
@@ -168,7 +183,7 @@ func mergeHistory(local, remote []byte) []byte {
 			continue
 		}
 		seen[key] = true
-		e := entry{raw: l.raw, seq: len(entries)}
+		e := entry{raw: l.raw}
 		if l.obj["ts"] != nil {
 			if v, err := strconv.ParseFloat(strings.Trim(string(l.obj["ts"]), `"`), 64); err == nil {
 				e.ts, e.hasTS = v, true
@@ -177,7 +192,10 @@ func mergeHistory(local, remote []byte) []byte {
 		entries = append(entries, e)
 	}
 
-	sort.SliceStable(entries, func(i, j int) bool {
+	// Ascending ts; equal ts (and lines without one) order by their bytes so
+	// both devices produce the same file. Entries are distinct, so bytes
+	// never tie.
+	sort.Slice(entries, func(i, j int) bool {
 		a, b := entries[i], entries[j]
 		if a.hasTS != b.hasTS {
 			return !a.hasTS // lines without a parsable ts sort first
@@ -185,14 +203,14 @@ func mergeHistory(local, remote []byte) []byte {
 		if a.hasTS && a.ts != b.ts {
 			return a.ts < b.ts
 		}
-		return a.seq < b.seq
+		return bytes.Compare(a.raw, b.raw) < 0
 	})
 
 	out := make([][]byte, 0, len(entries)+len(other))
 	for _, e := range entries {
 		out = append(out, e.raw)
 	}
-	out = append(out, other...)
+	out = append(out, sortedLines(other)...)
 	return joinJSONL(out)
 }
 

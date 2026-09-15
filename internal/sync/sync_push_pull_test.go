@@ -129,11 +129,11 @@ type testEnv struct {
 func setupTestEnv(t *testing.T) *testEnv {
 	t.Helper()
 	tmpDir := t.TempDir()
-	claudeDir := filepath.Join(tmpDir, ".claude")
+	claudeDir := filepath.Join(tmpDir, ".codex")
 	stateDir := filepath.Join(tmpDir, ".codex-sync")
 
 	if err := os.MkdirAll(claudeDir, 0755); err != nil {
-		t.Fatalf("Failed to create claude dir: %v", err)
+		t.Fatalf("Failed to create base dir: %v", err)
 	}
 	if err := os.MkdirAll(stateDir, 0700); err != nil {
 		t.Fatalf("Failed to create state dir: %v", err)
@@ -460,10 +460,10 @@ func TestPushThenPullRoundTrip(t *testing.T) {
 	sharedStore := newMockStorage()
 
 	// Device A setup
-	deviceADir := filepath.Join(tmpDir, "deviceA", ".claude")
+	deviceADir := filepath.Join(tmpDir, "deviceA", ".codex")
 	deviceAStateDir := filepath.Join(tmpDir, "deviceA", ".codex-sync")
 	if err := os.MkdirAll(deviceADir, 0755); err != nil {
-		t.Fatalf("Failed to create deviceA claude dir: %v", err)
+		t.Fatalf("Failed to create deviceA base dir: %v", err)
 	}
 	if err := os.MkdirAll(deviceAStateDir, 0700); err != nil {
 		t.Fatalf("Failed to create deviceA state dir: %v", err)
@@ -495,10 +495,10 @@ func TestPushThenPullRoundTrip(t *testing.T) {
 	}
 
 	// Device B setup (fresh, no local files)
-	deviceBDir := filepath.Join(tmpDir, "deviceB", ".claude")
+	deviceBDir := filepath.Join(tmpDir, "deviceB", ".codex")
 	deviceBStateDir := filepath.Join(tmpDir, "deviceB", ".codex-sync")
 	if err := os.MkdirAll(deviceBDir, 0755); err != nil {
-		t.Fatalf("Failed to create deviceB claude dir: %v", err)
+		t.Fatalf("Failed to create deviceB base dir: %v", err)
 	}
 	if err := os.MkdirAll(deviceBStateDir, 0700); err != nil {
 		t.Fatalf("Failed to create deviceB state dir: %v", err)
@@ -630,7 +630,7 @@ func TestPullEmptyRemoteIsNoop(t *testing.T) {
 }
 
 // TestPullSetsRestrictivePermissions verifies that files created by a pull are
-// 0600 and directories created by a pull are 0700. ~/.claude can contain API
+// 0600 and directories created by a pull are 0700. ~/.codex can contain API
 // keys, prompts, and personal context, so it must not be world-readable.
 //
 // Uses a nested remote path (skills/helper.json) so the pull actually has to

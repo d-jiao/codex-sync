@@ -548,6 +548,8 @@ func TestHardExcludesApplyWithoutUserConfig(t *testing.T) {
 		"vendor_imports/d", "browser/e", "node_repl/f", "process_manager/g", "dictation-history/h",
 		"transcription-history.jsonl", "version.json", "worktrees/repo/file.go",
 		"config.toml.app-full.bak", "sessions/2026/01/01/rollout-x.jsonl.tmp-123",
+		// conflict sidecars written by pull are resolved locally, never synced
+		"sessions/2026/01/01/rollout-c.jsonl.conflict.20260915-120000", "config.toml.conflict.20260915-120000",
 	}
 	for _, p := range excluded {
 		if !cfg.IsExcluded(p) {
@@ -561,6 +563,8 @@ func TestHardExcludesApplyWithoutUserConfig(t *testing.T) {
 		"sessions/2026/01/01/rollout-x.jsonl", "archived_sessions/rollout-y.jsonl", "session_index.jsonl",
 		"history.jsonl", "attachments/abc/goal.md", "config.toml", "rules/default.rules",
 		"skills/foo/SKILL.md", "memories/notes.md", "AGENTS.md",
+		// "logs" excludes the directory only, not every name starting with it
+		"skills/foo/logstash.md", "rules/logs-policy.md",
 	}
 	for _, p := range included {
 		if cfg.IsExcluded(p) {

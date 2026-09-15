@@ -13,12 +13,15 @@ import (
 // push and back to local paths on pull, so sessions started on one device are
 // resumable on another even when home directories or project layouts differ.
 //
-// Claude Code stores sessions under ~/.claude/projects/<encoded-cwd>/ where
-// <encoded-cwd> is the working directory with every non-alphanumeric character
-// replaced by "-" (e.g. /Users/alice/my-app -> -Users-alice-my-app). Because
-// the encoding is keyed to the absolute path, a transcript synced verbatim to
-// a machine with a different username or layout lands in a directory that
-// `claude --resume` never looks at.
+// The remote-key half is inherited from claude-sync, whose upstream tool keeps
+// sessions under projects/<encoded-cwd>/ with every non-alphanumeric character
+// of the working directory replaced by "-" (e.g. /Users/alice/my-app ->
+// -Users-alice-my-app), so a directory name synced verbatim to a machine with a
+// different username or layout is never found again. Codex rollouts are named
+// by date and UUID, which makes key rewriting a no-op here; the mechanism stays
+// so existing keys and upstream cherry-picks remain compatible. Content
+// rewriting is what matters for Codex: cwd fields and tool paths inside the
+// synced files.
 //
 // The mapper rewrites two things:
 //   - remote keys:   projects/-Users-alice-my-app/... -> projects/${HOME}-my-app/...
@@ -35,7 +38,7 @@ type PathMapper struct {
 type pathMapping struct {
 	name      string // token name, e.g. "HOME", "WORK"
 	localPath string // absolute local path, no trailing slash
-	encLocal  string // localPath in Claude Code's directory encoding
+	encLocal  string // localPath in the upstream project directory encoding
 	normRe    *regexp.Regexp
 	normRepl  []byte // replacement template: token ($-escaped) + boundary group
 }
@@ -92,8 +95,8 @@ func NewPathMapper(homeDir string, userMap map[string]string) (*PathMapper, erro
 	return m, nil
 }
 
-// EncodeClaudePath applies Claude Code's project directory encoding: every
-// character outside [A-Za-z0-9] becomes "-".
+// EncodeClaudePath applies the upstream (claude-sync) project directory
+// encoding: every character outside [A-Za-z0-9] becomes "-".
 func EncodeClaudePath(p string) string {
 	var b strings.Builder
 	b.Grow(len(p))

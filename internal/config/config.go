@@ -18,7 +18,7 @@ const (
 	AgeKeyFile = "age-key.txt"
 	TrashDir   = "trash"
 
-	// Sync scopes control which subset of ~/.claude is synced.
+	// Sync scopes control which subset of the Codex home is synced.
 	// ScopeFull (default) syncs everything in SyncPaths; ScopeSessions limits
 	// syncing to portable conversation data only.
 	ScopeFull     = "full"
@@ -42,7 +42,7 @@ type Config struct {
 	// Exclude patterns (glob-style) for paths to skip during sync
 	Exclude []string `yaml:"exclude,omitempty"`
 
-	// Scope selects which subset of ~/.claude to sync: "full" (default, empty)
+	// Scope selects which subset of the Codex home to sync: "full" (default, empty)
 	// or "sessions" (portable conversation data only). See ScopedSyncPaths.
 	Scope string `yaml:"scope,omitempty"`
 
@@ -97,21 +97,23 @@ var SessionSyncPaths = []string{
 
 // HardExcludes always apply, even when a user lists a parent directory (or ".")
 // in sync_paths. They cover identity files, every SQLite database (derived or
-// machine-local), runtime state, caches, logs and scratch files. Patterns use
-// the same matching rules as user excludes (see matchExcludePattern).
+// machine-local), runtime state, caches, logs, scratch files and the conflict
+// sidecars pull writes (resolved locally with `codex-sync conflicts`, never
+// synced). Patterns use the same matching rules as user excludes (see
+// matchExcludePattern).
 var HardExcludes = []string{
 	// identity — also protected, see ProtectedPaths
 	"auth.json", "installation_id",
 	// databases
 	"*.sqlite", "*.sqlite-wal", "*.sqlite-shm", "*.db", "*.db-wal", "*.db-shm", "sqlite",
 	// runtime state, caches, logs
-	"logs", "logs*", ".codex-global-state.json*", "..codex-global-state.json*",
+	"logs", ".codex-global-state.json*", "..codex-global-state.json*",
 	"plugins", "packages", "cache", ".tmp", "tmp", "ipc", "thread-writer-locks",
 	"shell_snapshots", "models_cache.json", "computer-use", "vendor_imports", "browser",
 	"node_repl", "process_manager", "dictation-history", "transcription-history.jsonl",
 	"version.json", "worktrees",
-	// scratch files
-	"*.bak", "*.tmp-*",
+	// scratch files and conflict sidecars
+	"*.bak", "*.tmp-*", "*.conflict.*",
 }
 
 // ProtectedPaths are never uploaded and never written by pull, regardless of

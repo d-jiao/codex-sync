@@ -151,7 +151,7 @@ func TestHashFile(t *testing.T) {
 func TestGetLocalFiles(t *testing.T) {
 	tmpDir := t.TempDir()
 
-	// Create a directory structure similar to .claude
+	// Create a directory structure similar to a Codex home
 	dirs := []string{"agents", "skills", "plugins"}
 	files := map[string]string{
 		"CLAUDE.md":          "# Claude MD",
@@ -291,7 +291,7 @@ func TestDetectChanges(t *testing.T) {
 func TestGetLocalFilesWithExclude(t *testing.T) {
 	tmpDir := t.TempDir()
 
-	// Create directory structure mimicking ~/.claude
+	// Create directory structure mimicking ~/.codex
 	dirs := []string{
 		"plugins/cache/thedotmack/claude-mem",
 		"plugins/marketplaces/repo",

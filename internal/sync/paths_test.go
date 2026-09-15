@@ -203,7 +203,7 @@ func TestCrossDeviceSessionSync(t *testing.T) {
 
 	// Second device: same bucket, different username
 	tmpB := t.TempDir()
-	claudeDirB := filepath.Join(tmpB, ".claude")
+	claudeDirB := filepath.Join(tmpB, ".codex")
 	if err := os.MkdirAll(claudeDirB, 0755); err != nil {
 		t.Fatal(err)
 	}

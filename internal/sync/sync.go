@@ -163,7 +163,7 @@ func (s *Syncer) isExcluded(relPath string) bool {
 	return s.cfg.IsExcluded(relPath)
 }
 
-// syncPaths returns the set of ~/.claude paths to sync, honoring both the
+// syncPaths returns the set of Codex home paths to sync, honoring both the
 // configured scope ("full" by default, or "sessions" for portable data only)
 // and any sync_paths override, with scope acting as a ceiling.
 func (s *Syncer) syncPaths() []string {
@@ -175,7 +175,7 @@ func (s *Syncer) Scope() string {
 	return s.cfg.Scope
 }
 
-// SyncPaths returns the effective ~/.claude paths this syncer operates on, so
+// SyncPaths returns the effective Codex home paths this syncer operates on, so
 // callers such as the pre-pull backup cover exactly the set that pull can
 // overwrite rather than recomputing it from scope alone.
 func (s *Syncer) SyncPaths() []string {
@@ -203,18 +203,25 @@ func (s *Syncer) Push(ctx context.Context) (*SyncResult, error) {
 		return result, nil
 	}
 
-	// Separate uploads from deletes
+	// Separate uploads from deletes. A file with a live conflict sidecar is
+	// not published until the user resolves it (spec §7): pushing it would
+	// silently overwrite the remote version the sidecar holds.
 	var uploads, deletes []FileChange
 	for _, change := range changes {
 		switch change.Action {
 		case "add", "modify":
+			if s.hasConflictSidecar(change.Path) {
+				result.Errors = append(result.Errors,
+					fmt.Errorf("unresolved conflict for %s; run 'codex-sync conflicts'", change.Path))
+				continue
+			}
 			uploads = append(uploads, change)
 		case "delete":
 			deletes = append(deletes, change)
 		}
 	}
 
-	total := len(changes)
+	total := len(uploads) + len(deletes)
 	var mu sync.Mutex
 	var completed atomic.Int32
 
@@ -582,11 +589,17 @@ func (s *Syncer) downloadFile(ctx context.Context, relativePath, remoteKey strin
 	return nil
 }
 
+// handleConflict keeps the local file and writes the remote copy next to it
+// as `<path>.conflict.<timestamp>`. The sidecar is a local artifact for
+// `codex-sync conflicts`: it is hard-excluded from every scan (config.HardExcludes)
+// and dropped from state here, so it is never uploaded, tracked or trashed.
 func (s *Syncer) handleConflict(ctx context.Context, relativePath string, remoteObj storage.ObjectInfo) error {
 	s.log("Conflict detected: %s (keeping local, saving remote as .conflict)", relativePath)
 
-	// Download remote version with conflict suffix
+	// downloadFile de-tokenizes content (IsPortableContentPath honors the
+	// .conflict. suffix) but also records the sidecar in state; undo that.
 	conflictPath := relativePath + ".conflict." + time.Now().Format("20060102-150405")
+	defer s.state.RemoveFile(conflictPath)
 	if err := s.downloadFile(ctx, conflictPath, remoteObj.Key, nil); err != nil {
 		return fmt.Errorf("failed to save conflict file: %w", err)
 	}
@@ -594,9 +607,35 @@ func (s *Syncer) handleConflict(ctx context.Context, relativePath string, remote
 	return nil
 }
 
+// isConflictSidecar reports whether relPath is a `<path>.conflict.<timestamp>`
+// sidecar written by handleConflict.
+func isConflictSidecar(relPath string) bool {
+	return strings.Contains(relPath, ".conflict.")
+}
+
+// hasConflictSidecar reports whether a `<relPath>.conflict.*` file sits next
+// to relPath. It lists the directory rather than globbing so names containing
+// glob metacharacters are matched literally.
+func (s *Syncer) hasConflictSidecar(relPath string) bool {
+	fullPath := filepath.Join(s.claudeDir, filepath.FromSlash(relPath))
+	entries, err := os.ReadDir(filepath.Dir(fullPath))
+	if err != nil {
+		return false
+	}
+	prefix := filepath.Base(fullPath) + ".conflict."
+	for _, e := range entries {
+		if !e.IsDir() && strings.HasPrefix(e.Name(), prefix) {
+			return true
+		}
+	}
+	return false
+}
+
 // staleLocalFiles lists tracked files that are present locally but gone from
 // the remote: removable when unchanged since the last sync, kept when modified
-// locally. Mergeable and protected paths are never candidates.
+// locally. Mergeable and protected paths are never candidates, nor are conflict
+// sidecars (handleConflict never tracks them; the skip covers state written by
+// older builds that did).
 func (s *Syncer) staleLocalFiles(remoteFiles map[string]storage.ObjectInfo, localFiles map[string]os.FileInfo) (removable, kept []string, err error) {
 	s.state.mu.Lock()
 	tracked := make([]string, 0, len(s.state.Files))
@@ -613,7 +652,7 @@ func (s *Syncer) staleLocalFiles(remoteFiles map[string]storage.ObjectInfo, loca
 		if _, onDisk := localFiles[relPath]; !onDisk {
 			continue
 		}
-		if IsMergeablePath(relPath) || config.IsProtected(relPath) {
+		if IsMergeablePath(relPath) || config.IsProtected(relPath) || isConflictSidecar(relPath) {
 			continue
 		}
 		hash, err := HashFile(filepath.Join(s.claudeDir, relPath))

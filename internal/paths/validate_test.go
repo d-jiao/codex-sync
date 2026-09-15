@@ -38,7 +38,7 @@ func TestValidatePath(t *testing.T) {
 }
 
 // TestAddRejectsTraversal ensures the CLI cannot persist a sync path that would
-// read outside ~/.claude on push or write outside it on pull.
+// read outside ~/.codex on push or write outside it on pull.
 func TestAddRejectsTraversal(t *testing.T) {
 	m := NewManager(nil, nil, "/tmp/test", config.ScopeFull)
 	before := len(m.SyncPaths())
