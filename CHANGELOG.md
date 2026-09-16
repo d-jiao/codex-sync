@@ -21,6 +21,9 @@
 
 ### Fixed
 
+- Push records the remote's own timestamp for each uploaded file when it is later
+  than the local clock (R2 stamps objects a few milliseconds after the upload
+  returns), so the next pull no longer re-downloads files this machine just pushed.
 - `conflicts --keep local` now records the remote's hash instead of marking the kept
   file as uploaded, so the next push publishes the kept version (previously it was never
   pushed and the other machine kept its own copy).

@@ -19,6 +19,10 @@ import (
 type mockStorage struct {
 	mu      sync.Mutex
 	objects map[string]mockObject
+	// clockSkew is added to every object's LastModified, simulating a storage
+	// service whose timestamps land slightly after the client's clock (R2 does
+	// this by a few milliseconds).
+	clockSkew time.Duration
 }
 
 type mockObject struct {
@@ -35,7 +39,7 @@ func (m *mockStorage) Upload(_ context.Context, key string, data []byte) error {
 	defer m.mu.Unlock()
 	cp := make([]byte, len(data))
 	copy(cp, data)
-	m.objects[key] = mockObject{data: cp, lastModified: time.Now()}
+	m.objects[key] = mockObject{data: cp, lastModified: time.Now().Add(m.clockSkew)}
 	return nil
 }
 
