@@ -63,6 +63,25 @@ the current scope is rejected rather than silently widening it.
   are safe to delete.
 - An empty remote never removes anything.
 
+## Showing pulled threads in the Codex desktop app
+
+The ChatGPT desktop app keeps its own thread catalog and fills it incrementally:
+after a one-time full build it only looks at threads newer than the last one it
+saw, so a thread that arrives via sync — whose timestamps are older — never
+appears in its sidebar on its own. After a pull that brought new threads, quit
+the ChatGPT app and run:
+
+```bash
+python3 scripts/codex-desktop-refresh.py
+```
+
+It backs up the app's databases to `~/.codex-sync/db-backup-<timestamp>/`, has
+the app's own engine index the new rollouts, copies thread names from the synced
+`session_index.jsonl` into the engine database, and schedules the app's full
+catalog sweep for its next launch. Relaunch the app and the pulled threads show
+up, named. The script refuses to run while the app or a `codex` process is open,
+and it is safe to run repeatedly.
+
 ## How push behaves
 
 Push uploads files whose content changed since the last sync and deletes the
@@ -72,8 +91,9 @@ with `codex-sync conflicts`; the sidecar itself is never uploaded.
 
 ## Limitations (v1)
 
-- Thread names: pulled threads appear unnamed in the Codex app until renamed
-  there (Codex does not restore names from the synced index).
+- Pulled threads do not appear in the ChatGPT desktop app, and carry no name in
+  the CLI, until you run `scripts/codex-desktop-refresh.py` (see above); Codex
+  itself never re-reads the synced index or rescans older rollouts.
 - Do not resume the same thread on two Macs between syncs; you would get a
   conflict sidecar instead of a merged transcript.
 - Project organization, automations and the memories database live only in

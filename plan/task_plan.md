@@ -39,9 +39,13 @@ work continues on either machine — what claude-sync already does for `~/.claud
   daily schedule (launchd); README/CLAUDE.md rewrite.
 - [x] Phase 3: Implementation plan — `plan/2026-09-15-codex-sync-v1-implementation.md` (12 tasks, TDD, one commit each).
 - [x] Phase 4: Implement with TDD; `make check` green; upstream's test suite is the safety net.
-- [ ] Phase 5: Roll out — new R2 bucket `codex-sync`; `codex-sync init` + first push on
-  this Mac; pull on the second Mac; launchd daily job on both; verify a conversation
-  resumes cross-machine.
+- [x] Phase 5: Roll out (2026-09-15/16) — R2 bucket `codex`; `init` + push on this Mac
+  (324 files); `init` + pull on Bob (backup kept; `rules/default.rules` and the pasted-text
+  attachments index had to be unioned by hand, see follow-ups #10/#11); Bob pushed 1411,
+  this Mac pulled 1410 + 1 merge, 0 conflicts. Engine check on an APFS clone: all 323 of
+  Bob's user-visible threads listed (650 more rollouts are sub-agent threads, hidden by
+  design); names do not carry over (§8 confirmed). No scheduler: the daily launchd agent
+  was declined (2026-09-16) — sync stays manual, `codex-sync pull && codex-sync push`.
 - [ ] Phase 6: README + CLAUDE.md rewrite; flip repo public (MIT derivative); optional
   upstream PR adding the missing `LICENSE` file to claude-sync.
 
@@ -85,6 +89,8 @@ work continues on either machine — what claude-sync already does for `~/.claud
 - Sync set is files only: `sessions/`, `archived_sessions/`, `session_index.jsonl`,
   `history.jsonl`, `config.toml` (with care), `rules/`, `skills/`, `memories/`, `AGENTS.md`.
   Every `*.sqlite*` is derived or machine-local and is excluded (spike, 2026-09-15).
+- No scheduled sync (2026-09-16): the user runs `codex-sync pull && codex-sync push` by
+  hand on each Mac; `make install-launchd` remains available but is not used.
 
 ## Errors Encountered
 - Step-5 bootstrap block only echoed a placeholder for `LICENSE`, so the file was never
@@ -95,9 +101,13 @@ work continues on either machine — what claude-sync already does for `~/.claud
 - Spike gotchas: (a) `thread/list` filters by current model provider unless
   `modelProviders` is passed; (b) engine version skew hides threads; (c) the TUI picker
   can't be captured with `script` — it waits on terminal capability queries.
+- Rollout: R2 `HeadBucket` 403 when the API token is scoped to another bucket; the
+  upload stamp bug (R2 `LastModified` lands up to ~20 ms after the local clock) made the
+  first pull want 179 re-downloads — fixed in 3829223; a faulty BSD `sed` printed the R2
+  secret into the transcript → rotate the token.
 
 ## Status
-**Phase 5 next** — rollout per spec §12 (init on the first Mac, push, init + pull on the second, launchd on both).
+**Phase 5 done** — manual sync on both Macs (no launchd by decision); desktop-app refresh script applied here, pending on Bob. Next: rotate the R2 token that leaked into the transcript (`init --force` with the new keys on both), then Phase 6.
 
 ## Follow-ups after the whole-branch review (2026-09-15)
 
@@ -123,3 +133,27 @@ conflict resolution across machines.
    round trip, `PreviewPull` on an empty remote, an upload-side `IsProtected` guard.
 8. `integration/r2_sync_test.go` (build-tag gated, real R2) still uses Claude-profile fixtures.
 9. Split `cmd/codex-sync/main.go` (~3000 lines) per command — unrelated churn, do it separately.
+10. `attachments/pasted-text-attachments.json` is a shared-append index (`attachmentPaths`,
+    `pendingRemovalPaths`, `textExcerptsByPath`): Bob's first pull replaced its 5-entry
+    index with this Mac's empty one and it had to be unioned by hand (2026-09-15). Add it
+    to `IsMergeablePath` with a per-field union (lists: ordered union; excerpts: key union),
+    after checking how the ChatGPT app treats entries whose file is gone.
+11. `rules/default.rules` likewise: the two machines had disjoint `prefix_rule` lines and
+    the pull kept only the remote's. Codex appends one rule per line, so a line-set union
+    is the natural merge — same treatment as #10.
+12. `push` has no `--dry-run` (`status` is the preview); add it for symmetry with `pull`.
+13. `codex-sync diff` compares plaintext local size with the compressed remote size, so it
+    reports every file as modified; compare manifest hashes instead (or drop the size).
+14. Wizard prompt says "Passphrase (min 8 chars)" but validation requires 12.
+15. `reconcile_names` (spec §8), now with evidence (2026-09-16): neither the backfill of new
+    rollouts into an existing `state_5.sqlite` nor a from-scratch rebuild reads names from
+    `session_index.jsonl` (rebuilt clone: 0 of this Mac's 114 names survived), so the index
+    is write-only for Codex and the opt-in DB write is the only way to carry names across
+    machines. 309 of Bob's 323 threads are named — this is the most visible v1 gap.
+16. Desktop-app visibility (2026-09-16, spec §13 answered): the ChatGPT app's catalog never
+    shows pulled threads on its own (one full build, then watermark-gated incremental
+    scans) and its engine only indexes rollouts it discovers itself. Manual remedy shipped
+    as `scripts/codex-desktop-refresh.py` (backup → engine index run → names from
+    `session_index.jsonl` into `threads.name` → clear `last_full_reconciled_at`); verified
+    here: catalog 62 → 143 threads, all named. Follow-up: fold it into `codex-sync pull`
+    (opt-in, refuses while the app runs) or a `codex-sync refresh` command in Go.

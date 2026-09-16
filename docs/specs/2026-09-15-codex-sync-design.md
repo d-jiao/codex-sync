@@ -149,11 +149,14 @@ column exist; it is out of scope for v1.
 
 Rollouts are append-only. The engine overwrites a local file only when it is unchanged
 since the last sync, so a thread being appended locally is never overwritten — it becomes
-a conflict instead. Pulled rollouts for inactive threads are picked up by Codex's scanner
-without a restart (spike). The desktop app keeps its own catalog
-(`sqlite/codex-dev.db`) that reconciles periodically; how quickly pulled threads appear
-there is unverified (§13). Recommended schedule: a daily run at a quiet hour plus a pull
-at login.
+a conflict instead. The CLI engine indexes pulled rollouts on its next `thread/list`
+(spike). The desktop app does not: its catalog (`sqlite/codex-dev.db`) is built in full
+once and then scanned incrementally past an `updated_at` watermark, so pulled threads —
+always older than the watermark — never appear until the full sweep is re-run
+(verified 2026-09-16, see §13). `scripts/codex-desktop-refresh.py` does that with the app
+quit: index via the app's engine, copy names from `session_index.jsonl` into
+`threads.name` (§8), clear `last_full_reconciled_at`. Recommended: run it after any pull
+that brought new threads.
 
 ## 10. CLI surface
 
@@ -199,7 +202,10 @@ atomic per file (write temp, rename).
 
 ## 13. Open questions
 
-- Does the desktop app's catalog pick up pulled threads without a restart, and how fast?
+- ~~Does the desktop app's catalog pick up pulled threads without a restart, and how fast?~~
+  Never (2026-09-16): `isFullReconciliationDue` is true only until the first full build;
+  afterwards scans stop at the `updated_at` watermark. Resolved by
+  `scripts/codex-desktop-refresh.py` (§9); folding it into `pull` is a follow-up.
 - Do `*.conflict.*` sidecars inside `sessions/` stay invisible to Codex?
 - Does Codex refresh `updated_at`/preview when a synced rollout grows? (`thread/list`
   reported the file's mtime, which suggests yes.)
