@@ -126,12 +126,12 @@ func reportSyncErrors(cmd *cobra.Command, w io.Writer, errs []error) error {
 	}
 	if quiet {
 		for _, e := range errs {
-			fmt.Fprintf(w, "codex-sync: %v\n", e)
+			_, _ = fmt.Fprintf(w, "codex-sync: %v\n", e)
 		}
 	} else {
-		fmt.Fprintf(w, "\n%sErrors:%s\n", colorYellow, colorReset)
+		_, _ = fmt.Fprintf(w, "\n%sErrors:%s\n", colorYellow, colorReset)
 		for _, e := range errs {
-			fmt.Fprintf(w, "  %s•%s %v\n", colorYellow, colorReset, e)
+			_, _ = fmt.Fprintf(w, "  %s•%s %v\n", colorYellow, colorReset, e)
 		}
 	}
 	cmd.SilenceUsage = true
