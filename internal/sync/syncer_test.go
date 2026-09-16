@@ -2,7 +2,6 @@ package sync
 
 import (
 	"context"
-	"encoding/json"
 	"os"
 	"path/filepath"
 	"sync/atomic"
@@ -16,11 +15,11 @@ import (
 func testSyncer(t *testing.T) (*Syncer, *mockStorage, string) {
 	t.Helper()
 	tmpDir := t.TempDir()
-	claudeDir := filepath.Join(tmpDir, ".claude")
+	claudeDir := filepath.Join(tmpDir, ".codex")
 	stateDir := filepath.Join(tmpDir, ".codex-sync")
 
 	if err := os.MkdirAll(claudeDir, 0755); err != nil {
-		t.Fatalf("Failed to create claude dir: %v", err)
+		t.Fatalf("Failed to create base dir: %v", err)
 	}
 	if err := os.MkdirAll(stateDir, 0700); err != nil {
 		t.Fatalf("Failed to create state dir: %v", err)
@@ -97,8 +96,8 @@ func TestSyncerPush_NewFiles(t *testing.T) {
 	syncer, store, claudeDir := testSyncer(t)
 	ctx := context.Background()
 
-	createTestFile(t, claudeDir, "CLAUDE.md", "# My Settings")
-	createTestFile(t, claudeDir, "settings.json", `{"theme":"dark"}`)
+	createTestFile(t, claudeDir, "AGENTS.md", "# My Settings")
+	createTestFile(t, claudeDir, "config.toml", `{"theme":"dark"}`)
 
 	result, err := syncer.Push(ctx)
 	if err != nil {
@@ -119,7 +118,7 @@ func TestSyncerPush_NoChanges(t *testing.T) {
 	syncer, _, claudeDir := testSyncer(t)
 	ctx := context.Background()
 
-	createTestFile(t, claudeDir, "CLAUDE.md", "# My Settings")
+	createTestFile(t, claudeDir, "AGENTS.md", "# My Settings")
 
 	// First push
 	_, err := syncer.Push(ctx)
@@ -145,7 +144,7 @@ func TestSyncerPull_DownloadsNewFiles(t *testing.T) {
 	ctx := context.Background()
 
 	// Create a file on syncer1 and push
-	createTestFile(t, claudeDir1, "CLAUDE.md", "# Shared Settings")
+	createTestFile(t, claudeDir1, "AGENTS.md", "# Shared Settings")
 	_, err := syncer1.Push(ctx)
 	if err != nil {
 		t.Fatalf("Push from syncer1 failed: %v", err)
@@ -153,7 +152,7 @@ func TestSyncerPull_DownloadsNewFiles(t *testing.T) {
 
 	// Create syncer2 sharing the same storage and encryptor
 	tmpDir2 := t.TempDir()
-	claudeDir2 := filepath.Join(tmpDir2, ".claude")
+	claudeDir2 := filepath.Join(tmpDir2, ".codex")
 	stateDir2 := filepath.Join(tmpDir2, ".codex-sync")
 	if err := os.MkdirAll(claudeDir2, 0755); err != nil {
 		t.Fatalf("Failed to create claudeDir2: %v", err)
@@ -177,7 +176,7 @@ func TestSyncerPull_DownloadsNewFiles(t *testing.T) {
 	}
 
 	// Verify the file was downloaded
-	data, err := os.ReadFile(filepath.Join(claudeDir2, "CLAUDE.md"))
+	data, err := os.ReadFile(filepath.Join(claudeDir2, "AGENTS.md"))
 	if err != nil {
 		t.Fatalf("Failed to read downloaded file: %v", err)
 	}
@@ -192,7 +191,7 @@ func TestSyncerStatus_DetectsNewFiles(t *testing.T) {
 	syncer, _, claudeDir := testSyncer(t)
 	ctx := context.Background()
 
-	createTestFile(t, claudeDir, "CLAUDE.md", "# New file")
+	createTestFile(t, claudeDir, "AGENTS.md", "# New file")
 
 	changes, err := syncer.Status(ctx)
 	if err != nil {
@@ -210,7 +209,7 @@ func TestSyncerStatus_NoChangesAfterPush(t *testing.T) {
 	syncer, _, claudeDir := testSyncer(t)
 	ctx := context.Background()
 
-	createTestFile(t, claudeDir, "CLAUDE.md", "# Settings")
+	createTestFile(t, claudeDir, "AGENTS.md", "# Settings")
 
 	_, err := syncer.Push(ctx)
 	if err != nil {
@@ -244,7 +243,7 @@ func TestSyncerHasState(t *testing.T) {
 	}
 
 	// After push, should have state
-	createTestFile(t, claudeDir, "CLAUDE.md", "# Settings")
+	createTestFile(t, claudeDir, "AGENTS.md", "# Settings")
 	_, err := syncer.Push(ctx)
 	if err != nil {
 		t.Fatalf("Push failed: %v", err)
@@ -263,7 +262,7 @@ func TestSyncerSetProgressFunc(t *testing.T) {
 		called.Add(1)
 	})
 
-	createTestFile(t, claudeDir, "CLAUDE.md", "# Settings")
+	createTestFile(t, claudeDir, "AGENTS.md", "# Settings")
 	_, err := syncer.Push(ctx)
 	if err != nil {
 		t.Fatalf("Push failed: %v", err)
@@ -271,153 +270,6 @@ func TestSyncerSetProgressFunc(t *testing.T) {
 
 	if called.Load() == 0 {
 		t.Error("Expected progress function to be called at least once")
-	}
-}
-
-// --- Task 6: MCP tests ---
-
-func TestSyncerPushMCP_NoServers(t *testing.T) {
-	syncer, _, _ := testSyncer(t)
-	ctx := context.Background()
-
-	// Point claudeJSONPath to a non-existent file
-	tmpDir := t.TempDir()
-	syncer.cfg.ClaudeJSONOverride = filepath.Join(tmpDir, "claude.json")
-
-	result, err := syncer.PushMCP(ctx)
-	if err != nil {
-		t.Fatalf("PushMCP failed: %v", err)
-	}
-	if !result.Unchanged {
-		t.Error("Expected Unchanged to be true when no servers exist")
-	}
-}
-
-func TestSyncerPushMCP_WithServers(t *testing.T) {
-	syncer, _, _ := testSyncer(t)
-	ctx := context.Background()
-
-	// Override claudeJSONPath to a temp location
-	tmpDir := t.TempDir()
-	syncer.cfg.ClaudeJSONOverride = filepath.Join(tmpDir, "claude.json")
-
-	// Write claude.json with mcpServers
-	claudeJSON := syncer.claudeJSONPath()
-	if err := os.MkdirAll(filepath.Dir(claudeJSON), 0755); err != nil {
-		t.Fatalf("Failed to create dir: %v", err)
-	}
-	content := `{"mcpServers":{"test-server":{"command":"node","args":["server.js"]}}}`
-	if err := os.WriteFile(claudeJSON, []byte(content), 0644); err != nil {
-		t.Fatalf("Failed to write claude.json: %v", err)
-	}
-
-	result, err := syncer.PushMCP(ctx)
-	if err != nil {
-		t.Fatalf("PushMCP failed: %v", err)
-	}
-	if result.ServersPushed != 1 {
-		t.Errorf("Expected ServersPushed=1, got %d", result.ServersPushed)
-	}
-}
-
-func TestSyncerPullMCP_NoRemote(t *testing.T) {
-	syncer, _, _ := testSyncer(t)
-	ctx := context.Background()
-
-	// Point claudeJSONPath to a temp location
-	tmpDir := t.TempDir()
-	syncer.cfg.ClaudeJSONOverride = filepath.Join(tmpDir, "claude.json")
-
-	result, err := syncer.PullMCP(ctx)
-	if err != nil {
-		t.Fatalf("PullMCP failed: %v", err)
-	}
-	if !result.NoRemote {
-		t.Error("Expected NoRemote to be true when no remote data exists")
-	}
-}
-
-func TestSyncerPullMCP_RoundTrip(t *testing.T) {
-	// syncer1 pushes MCP, syncer2 pulls it
-	syncer1, store, _ := testSyncer(t)
-	ctx := context.Background()
-
-	// Set up syncer1's claude.json
-	tmpDir1 := t.TempDir()
-	claudeJSON1 := filepath.Join(tmpDir1, "claude.json")
-	syncer1.cfg.ClaudeJSONOverride = claudeJSON1
-	content := `{"mcpServers":{"my-server":{"command":"python","args":["serve.py"]}}}`
-	if err := os.WriteFile(claudeJSON1, []byte(content), 0644); err != nil {
-		t.Fatalf("Failed to write claude.json: %v", err)
-	}
-
-	// Push from syncer1
-	_, err := syncer1.PushMCP(ctx)
-	if err != nil {
-		t.Fatalf("PushMCP from syncer1 failed: %v", err)
-	}
-
-	// Create syncer2 sharing the same storage and encryptor
-	tmpDir2 := t.TempDir()
-	stateDir2 := filepath.Join(tmpDir2, ".codex-sync")
-	claudeDir2 := filepath.Join(tmpDir2, ".claude")
-	if err := os.MkdirAll(stateDir2, 0700); err != nil {
-		t.Fatalf("Failed to create stateDir2: %v", err)
-	}
-	if err := os.MkdirAll(claudeDir2, 0755); err != nil {
-		t.Fatalf("Failed to create claudeDir2: %v", err)
-	}
-	state2, _ := LoadStateFromDir(stateDir2)
-	syncer2 := NewSyncerWith(&config.Config{}, store, syncer1.encryptor, state2, claudeDir2, true)
-	claudeJSON2 := filepath.Join(tmpDir2, "claude.json")
-	syncer2.cfg.ClaudeJSONOverride = claudeJSON2
-
-	// Pull from syncer2
-	result, err := syncer2.PullMCP(ctx)
-	if err != nil {
-		t.Fatalf("PullMCP from syncer2 failed: %v", err)
-	}
-
-	// Verify "my-server" was added
-	found := false
-	for _, name := range result.Added {
-		if name == "my-server" {
-			found = true
-			break
-		}
-	}
-	if !found {
-		t.Errorf("Expected 'my-server' in Added, got %v", result.Added)
-	}
-
-	// Verify claude.json was written with the server
-	data, err := os.ReadFile(claudeJSON2)
-	if err != nil {
-		t.Fatalf("Failed to read syncer2 claude.json: %v", err)
-	}
-	var parsed map[string]json.RawMessage
-	if err := json.Unmarshal(data, &parsed); err != nil {
-		t.Fatalf("Failed to parse syncer2 claude.json: %v", err)
-	}
-	if _, ok := parsed["mcpServers"]; !ok {
-		t.Error("Expected mcpServers key in syncer2 claude.json")
-	}
-}
-
-func TestSyncerMCPStatus_NoServers(t *testing.T) {
-	syncer, _, _ := testSyncer(t)
-	ctx := context.Background()
-
-	// Point to non-existent claude.json
-	tmpDir := t.TempDir()
-	syncer.cfg.ClaudeJSONOverride = filepath.Join(tmpDir, "claude.json")
-
-	result, err := syncer.MCPStatus(ctx)
-	if err != nil {
-		t.Fatalf("MCPStatus failed: %v", err)
-	}
-	if result.ServerCount != 0 {
-		t.Errorf("Expected ServerCount=0, got %d", result.ServerCount)
 	}
 }
 

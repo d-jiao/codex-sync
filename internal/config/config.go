@@ -16,12 +16,9 @@ const (
 	ConfigFile = "config.yaml"
 	StateFile  = "state.json"
 	AgeKeyFile = "age-key.txt"
+	TrashDir   = "trash"
 
-	// MCPRemoteKey is the remote storage key for synced MCP server configs.
-	// The _external/ prefix separates it from ~/.claude/-relative files.
-	MCPRemoteKey = "_external/mcp-servers.json"
-
-	// Sync scopes control which subset of ~/.claude is synced.
+	// Sync scopes control which subset of the Codex home is synced.
 	// ScopeFull (default) syncs everything in SyncPaths; ScopeSessions limits
 	// syncing to portable conversation data only.
 	ScopeFull     = "full"
@@ -45,19 +42,13 @@ type Config struct {
 	// Exclude patterns (glob-style) for paths to skip during sync
 	Exclude []string `yaml:"exclude,omitempty"`
 
-	// Scope selects which subset of ~/.claude to sync: "full" (default, empty)
+	// Scope selects which subset of the Codex home to sync: "full" (default, empty)
 	// or "sessions" (portable conversation data only). See ScopedSyncPaths.
 	Scope string `yaml:"scope,omitempty"`
 
 	// SyncPaths overrides the scope-based default paths when non-empty.
 	// Use GetEffectiveSyncPaths() to get the actual paths to sync.
 	SyncPaths []string `yaml:"sync_paths,omitempty"`
-
-	// MCPSync enables syncing MCP server configs from ~/.claude.json.
-	// Pointer type allows distinguishing between unset (nil), enabled (true),
-	// and explicitly disabled (false). Nil is treated as disabled for backward
-	// compatibility with existing configs.
-	MCPSync *bool `yaml:"mcp_sync,omitempty"`
 
 	// PathMap maps local directory prefixes to shared token names so project
 	// sessions stay resumable across devices with different layouts.
@@ -70,42 +61,85 @@ type Config struct {
 	//     ~/Projects: WORK
 	PathMap map[string]string `yaml:"path_map,omitempty"`
 
-	// ClaudeDirOverride allows overriding the default ~/.claude path (for testing)
-	ClaudeDirOverride string `yaml:"-"`
+	// BaseDirOverride overrides the resolved Codex home (for testing)
+	BaseDirOverride string `yaml:"-"`
 
 	// StateDirOverride allows overriding the state file directory (for testing)
 	StateDirOverride string `yaml:"-"`
-
-	// ClaudeJSONOverride allows overriding the ~/.claude.json path (for testing)
-	ClaudeJSONOverride string `yaml:"-"`
 }
 
-// SyncPaths defines which paths under ~/.claude to sync in the default "full" scope.
+// SyncPaths is the "full" scope: everything under the Codex home that is
+// portable user state. Rollout files (sessions/, archived_sessions/) are the
+// source of truth for conversations; Codex rebuilds its SQLite indexes from
+// them (spike, 2026-09-15), so no database is ever synced.
 var SyncPaths = []string{
-	"CLAUDE.md",
-	"settings.json",
-	"settings.local.json",
-	"agents",
-	"commands",
-	"skills",
-	"plugins",
-	"projects",
-	"plans",
-	"tasks",
+	"sessions",
+	"archived_sessions",
+	"session_index.jsonl",
 	"history.jsonl",
+	"attachments",
+	"config.toml",
 	"rules",
-	"workflows",
+	"skills",
+	"memories",
+	"AGENTS.md",
 }
 
-// SessionSyncPaths is the subset synced in the "sessions" scope: portable,
-// high-value conversation data and its per-project work state. It deliberately
-// excludes plugins/ (which bundles non-portable node_modules and .venv trees),
-// along with machine-specific settings, skills, agents, and commands.
+// SessionSyncPaths is the "sessions" scope: conversation data only — the
+// rollouts, their names (session_index.jsonl), prompt history and attachments.
 var SessionSyncPaths = []string{
-	"projects",
+	"sessions",
+	"archived_sessions",
+	"session_index.jsonl",
 	"history.jsonl",
-	"tasks",
-	"plans",
+	"attachments",
+}
+
+// HardExcludes always apply, even when a user lists a parent directory (or ".")
+// in sync_paths. They cover identity files, every SQLite database (derived or
+// machine-local), runtime state, caches, logs, scratch files and the conflict
+// sidecars pull writes (resolved locally with `codex-sync conflicts`, never
+// synced). Patterns use the same matching rules as user excludes (see
+// matchExcludePattern).
+var HardExcludes = []string{
+	// identity — also protected, see ProtectedPaths
+	"auth.json", "installation_id",
+	// databases
+	"*.sqlite", "*.sqlite-wal", "*.sqlite-shm", "*.db", "*.db-wal", "*.db-shm", "sqlite",
+	// runtime state, caches, logs
+	"logs", ".codex-global-state.json*", "..codex-global-state.json*",
+	"plugins", "packages", "cache", ".tmp", "tmp", "ipc", "thread-writer-locks",
+	"shell_snapshots", "models_cache.json", "computer-use", "vendor_imports", "browser",
+	"node_repl", "process_manager", "dictation-history", "transcription-history.jsonl",
+	"version.json", "worktrees",
+	// scratch files and conflict sidecars
+	"*.bak", "*.tmp-*", "*.conflict.*",
+}
+
+// ProtectedPaths are never uploaded and never written by pull, regardless of
+// configuration: they identify this machine's login and installation.
+var ProtectedPaths = []string{"auth.json", "installation_id"}
+
+// IsHardExcluded reports whether relPath matches a HardExcludes pattern.
+func IsHardExcluded(relPath string) bool {
+	relPath = filepath.ToSlash(relPath)
+	for _, pattern := range HardExcludes {
+		if matchExcludePattern(pattern, relPath) {
+			return true
+		}
+	}
+	return false
+}
+
+// IsProtected reports whether relPath is one of ProtectedPaths (exact match).
+func IsProtected(relPath string) bool {
+	relPath = filepath.ToSlash(relPath)
+	for _, p := range ProtectedPaths {
+		if relPath == p {
+			return true
+		}
+	}
+	return false
 }
 
 // ScopedSyncPaths returns the sync path set for the given scope. "sessions"
@@ -147,27 +181,44 @@ func AgeKeyFilePath() string {
 	return filepath.Join(ConfigDirPath(), AgeKeyFile)
 }
 
-func ClaudeDir() string {
-	path, _ := ClaudeDirE()
+// TrashDirPath is where pull moves local files that vanished from the remote
+// (spec §7); nothing is ever unlinked outright.
+func TrashDirPath() string {
+	return filepath.Join(ConfigDirPath(), TrashDir)
+}
+
+const (
+	// BaseDirEnv is Codex's own override for its home directory; codex-sync honors it.
+	BaseDirEnv = "CODEX_HOME"
+	// DefaultBaseDirName is the directory under $HOME that Codex uses by default.
+	DefaultBaseDirName = ".codex"
+)
+
+// BaseDir returns the Codex home directory ($CODEX_HOME, else ~/.codex).
+func BaseDir() string {
+	path, _ := BaseDirE()
 	return path
 }
 
-// ClaudeDirE returns the Claude directory path or an error if home dir is unavailable.
-func ClaudeDirE() (string, error) {
+// BaseDirE returns the Codex home directory or an error if it cannot be
+// determined. $CODEX_HOME wins when set (a leading ~ is expanded); otherwise
+// ~/.codex, mirroring Codex's own resolution.
+func BaseDirE() (string, error) {
+	if custom := strings.TrimSpace(os.Getenv(BaseDirEnv)); custom != "" {
+		if strings.HasPrefix(custom, "~") {
+			home, err := os.UserHomeDir()
+			if err != nil {
+				return "", ErrNoHomeDir
+			}
+			custom = filepath.Join(home, custom[1:])
+		}
+		return filepath.Clean(custom), nil
+	}
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return "", ErrNoHomeDir
 	}
-	return filepath.Join(home, ".claude"), nil
-}
-
-// ClaudeJSONPath returns the path to ~/.claude.json where global MCP servers are configured.
-func ClaudeJSONPath() string {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return ""
-	}
-	return filepath.Join(home, ".claude.json")
+	return filepath.Join(home, DefaultBaseDirName), nil
 }
 
 func Load() (*Config, error) {
@@ -306,56 +357,43 @@ func (c *Config) GetEffectiveSyncPaths() []string {
 	return within
 }
 
-// IsMCPSyncEnabled returns true if MCP sync is explicitly enabled.
-// Returns false if MCPSync is nil (unset) or false.
-func (c *Config) IsMCPSyncEnabled() bool {
-	return c.MCPSync != nil && *c.MCPSync
-}
-
-// SetMCPSync sets the MCP sync state. Pass true to enable, false to explicitly disable.
-func (c *Config) SetMCPSync(enabled bool) {
-	c.MCPSync = &enabled
-}
-
-// IsExcluded returns true if the given relative path matches any exclude pattern.
-// Patterns support:
-//   - Full doublestar glob syntax including ** for recursive matching
-//   - Examples: "**/.git/**", "*.tmp", "plugins/cache/**", "projects/*/node_modules/**"
-//   - Directory prefix (e.g. "plugins/marketplace" matches everything under it)
-//   - Filename glob (e.g. "*.tmp" matches "foo/bar/file.tmp")
+// IsExcluded returns true if the given relative path is hard-excluded or
+// matches a user exclude pattern.
 func (c *Config) IsExcluded(relPath string) bool {
-	// Normalize path separators for consistent matching
 	relPath = filepath.ToSlash(relPath)
-
+	if IsHardExcluded(relPath) {
+		return true
+	}
 	for _, pattern := range c.Exclude {
-		// Normalize pattern separators
-		pattern = filepath.ToSlash(pattern)
-
-		// Use doublestar for full glob matching including ** support
-		matched, err := doublestar.Match(pattern, relPath)
-		if err == nil && matched {
+		if matchExcludePattern(filepath.ToSlash(pattern), relPath) {
 			return true
 		}
+	}
+	return false
+}
 
-		// Try glob match on filename only (for patterns like "*.tmp")
-		// but only if the pattern doesn't contain path separators
-		if !strings.Contains(pattern, "/") && (strings.Contains(pattern, "*") || strings.Contains(pattern, "?")) {
-			if matched, _ := doublestar.Match(pattern, filepath.Base(relPath)); matched {
-				return true
-			}
+// matchExcludePattern applies one exclude pattern to a slash-separated relative
+// path. Patterns support:
+//   - full doublestar glob syntax including ** (e.g. "**/.git/**", "plugins/cache/**")
+//   - filename globs without a separator (e.g. "*.tmp" matches "foo/bar/file.tmp")
+//   - plain names as a directory prefix or exact match (e.g. "plugins" matches
+//     "plugins" and everything under "plugins/")
+func matchExcludePattern(pattern, relPath string) bool {
+	if matched, err := doublestar.Match(pattern, relPath); err == nil && matched {
+		return true
+	}
+	hasGlob := strings.ContainsAny(pattern, "*?")
+	if hasGlob && !strings.Contains(pattern, "/") {
+		if matched, _ := doublestar.Match(pattern, filepath.Base(relPath)); matched {
+			return true
 		}
-
-		// Also match if the path starts with the pattern as a directory prefix
-		// This lets "plugins/marketplace" exclude everything under that dir
-		if !strings.Contains(pattern, "*") && !strings.Contains(pattern, "?") {
-			if len(relPath) > len(pattern) && relPath[:len(pattern)] == pattern &&
-				relPath[len(pattern)] == '/' {
-				return true
-			}
-			// Exact match for non-glob patterns
-			if relPath == pattern {
-				return true
-			}
+	}
+	if !hasGlob {
+		if relPath == pattern {
+			return true
+		}
+		if len(relPath) > len(pattern) && strings.HasPrefix(relPath, pattern) && relPath[len(pattern)] == '/' {
+			return true
 		}
 	}
 	return false

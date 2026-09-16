@@ -154,36 +154,46 @@ func TestPathMapperValidation(t *testing.T) {
 	}
 }
 
-func TestIsPortableContentPath(t *testing.T) {
+func TestIsPortableContentPathCodex(t *testing.T) {
 	cases := map[string]bool{
-		"history.jsonl":                                           true,
-		"projects/-Users-a-x/sess.jsonl":                          true,
-		"projects/-Users-a-x/memory/notes.md":                     true,
-		"projects/-Users-a-x/sess.jsonl.conflict.20260610-120000": true,
-		"projects/-Users-a-x/img.png":                             false,
-		"settings.json":                                           false,
-		"agents/foo.md":                                           false,
+		"history.jsonl":                       true,
+		"session_index.jsonl":                 true,
+		"config.toml":                         true,
+		"AGENTS.md":                           true,
+		"sessions/2026/01/01/rollout-a.jsonl": true,
+		"sessions/2026/01/01/rollout-a.jsonl.conflict.20260101-000000": true,
+		"archived_sessions/rollout-b.jsonl":                            true,
+		"rules/default.rules":                                          false,
+		"rules/notes.md":                                               true,
+		"skills/foo/SKILL.md":                                          true,
+		"skills/foo/tool.py":                                           false,
+		"skills/foo/config.toml":                                       true,
+		"memories/notes.txt":                                           true,
+		"attachments/abc/goal.md":                                      false,
+		"attachments/pasted-text-attachments.json":                     false,
+		"projects/-Users-alice-app/session.jsonl":                      false,
 	}
-	for in, want := range cases {
-		if got := IsPortableContentPath(in); got != want {
-			t.Errorf("IsPortableContentPath(%q) = %v, want %v", in, got, want)
+	for relPath, want := range cases {
+		if got := IsPortableContentPath(relPath); got != want {
+			t.Errorf("IsPortableContentPath(%q) = %v, want %v", relPath, got, want)
 		}
 	}
 }
 
 // TestCrossDeviceSessionSync simulates two devices with different usernames
-// sharing one bucket: a session pushed from alice's machine must land on
-// bob's machine under bob's encoded project directory with rewritten content.
+// sharing one bucket: a Codex rollout pushed from alice's machine must have
+// its cwd field tokenized to ${HOME} remotely and resolved to bob's home
+// directory on pull.
 func TestCrossDeviceSessionSync(t *testing.T) {
 	syncerA, store, claudeDirA := testSyncer(t)
 	syncerA.paths = mustMapper(t, "/Users/alice", nil)
 
-	sessDir := filepath.Join(claudeDirA, "projects", "-Users-alice-my-app")
+	sessDir := filepath.Join(claudeDirA, "sessions", "2026", "01", "01")
 	if err := os.MkdirAll(sessDir, 0700); err != nil {
 		t.Fatal(err)
 	}
 	content := `{"cwd":"/Users/alice/my-app","type":"user"}` + "\n"
-	if err := os.WriteFile(filepath.Join(sessDir, "sess.jsonl"), []byte(content), 0600); err != nil {
+	if err := os.WriteFile(filepath.Join(sessDir, "rollout-cross.jsonl"), []byte(content), 0600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -191,14 +201,9 @@ func TestCrossDeviceSessionSync(t *testing.T) {
 		t.Fatalf("push: %v", err)
 	}
 
-	wantKey := "projects/${HOME}-my-app/sess.jsonl.age"
-	if _, err := store.Download(context.Background(), wantKey); err != nil {
-		t.Fatalf("expected normalized remote key %s: %v", wantKey, err)
-	}
-
-	// Second device: same bucket and key, different username
+	// Second device: same bucket, different username
 	tmpB := t.TempDir()
-	claudeDirB := filepath.Join(tmpB, ".claude")
+	claudeDirB := filepath.Join(tmpB, ".codex")
 	if err := os.MkdirAll(claudeDirB, 0755); err != nil {
 		t.Fatal(err)
 	}
@@ -217,10 +222,10 @@ func TestCrossDeviceSessionSync(t *testing.T) {
 		t.Fatalf("pull errors: %v", result.Errors)
 	}
 
-	localPath := filepath.Join(claudeDirB, "projects", "-Users-bob-my-app", "sess.jsonl")
+	localPath := filepath.Join(claudeDirB, "sessions", "2026", "01", "01", "rollout-cross.jsonl")
 	data, err := os.ReadFile(localPath)
 	if err != nil {
-		t.Fatalf("expected session under bob's project dir: %v", err)
+		t.Fatalf("expected rollout at %s: %v", localPath, err)
 	}
 	want := `{"cwd":"/Users/bob/my-app","type":"user"}` + "\n"
 	if string(data) != want {
@@ -230,70 +235,5 @@ func TestCrossDeviceSessionSync(t *testing.T) {
 	info, _ := os.Stat(localPath)
 	if info.Mode().Perm() != 0600 {
 		t.Errorf("downloaded file mode = %v, want 0600", info.Mode().Perm())
-	}
-}
-
-func TestMigratePaths(t *testing.T) {
-	syncer, store, claudeDir := testSyncer(t)
-	ctx := context.Background()
-
-	// Create the local session file
-	sessDir := filepath.Join(claudeDir, "projects", "-Users-alice-my-app")
-	if err := os.MkdirAll(sessDir, 0700); err != nil {
-		t.Fatal(err)
-	}
-	relPath := "projects/-Users-alice-my-app/sess.jsonl"
-	if err := os.WriteFile(filepath.Join(claudeDir, relPath), []byte(`{"cwd":"/Users/alice/my-app"}`), 0600); err != nil {
-		t.Fatal(err)
-	}
-
-	// Push under legacy (identity) keys, as an old version would have
-	syncer.paths = mustMapper(t, "/nonexistent-home-zz", nil)
-	if _, err := syncer.Push(ctx); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := store.Download(ctx, relPath+".age"); err != nil {
-		t.Fatalf("legacy key missing after push: %v", err)
-	}
-
-	// A key owned by another device: no local copy here
-	if err := store.Upload(ctx, "projects/-Users-zed-other/x.jsonl.age", []byte("opaque")); err != nil {
-		t.Fatal(err)
-	}
-
-	// Upgrade: mapper now knows this machine is alice's
-	syncer.paths = mustMapper(t, "/Users/alice", nil)
-
-	result, err := syncer.MigratePaths(ctx)
-	if err != nil {
-		t.Fatalf("migrate: %v", err)
-	}
-	if len(result.Errors) > 0 {
-		t.Fatalf("migrate errors: %v", result.Errors)
-	}
-	if len(result.Migrated) != 1 || result.Migrated[0] != relPath {
-		t.Errorf("Migrated = %v, want [%s]", result.Migrated, relPath)
-	}
-	if len(result.Foreign) != 1 || result.Foreign[0] != "projects/-Users-zed-other/x.jsonl" {
-		t.Errorf("Foreign = %v", result.Foreign)
-	}
-
-	if _, err := store.Download(ctx, relPath+".age"); err == nil {
-		t.Error("legacy key still present after migrate")
-	}
-	if _, err := store.Download(ctx, "projects/${HOME}-my-app/sess.jsonl.age"); err != nil {
-		t.Errorf("normalized key missing after migrate: %v", err)
-	}
-	if _, err := store.Download(ctx, "projects/-Users-zed-other/x.jsonl.age"); err != nil {
-		t.Errorf("foreign key should be untouched: %v", err)
-	}
-
-	// Second run is a no-op for this device
-	result2, err := syncer.MigratePaths(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(result2.Migrated) != 0 {
-		t.Errorf("second migrate should migrate nothing, got %v", result2.Migrated)
 	}
 }

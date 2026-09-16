@@ -20,7 +20,7 @@ func DefaultSyncPaths(scope string) []string {
 	return config.ScopedSyncPaths(scope)
 }
 
-// ValidatePath rejects sync path entries that would escape ~/.claude.
+// ValidatePath rejects sync path entries that would escape the Codex home.
 //
 // Sync paths were a hardcoded constant until the sync_paths override was wired
 // up, so nothing validated them. They are now user-supplied input that becomes
@@ -31,16 +31,16 @@ func ValidatePath(path string) error {
 		return fmt.Errorf("path cannot be empty")
 	}
 	if filepath.IsAbs(path) || strings.HasPrefix(path, "/") {
-		return fmt.Errorf("path must be relative to ~/.claude, got absolute path %q", path)
+		return fmt.Errorf("path must be relative to the Codex home (~/.codex), got absolute path %q", path)
 	}
 	if vol := filepath.VolumeName(path); vol != "" {
-		return fmt.Errorf("path must be relative to ~/.claude, got %q", path)
+		return fmt.Errorf("path must be relative to the Codex home (~/.codex), got %q", path)
 	}
 
 	// Clean resolves ".." segments; anything still climbing escapes the root.
 	cleaned := filepath.ToSlash(filepath.Clean(path))
 	if cleaned == ".." || strings.HasPrefix(cleaned, "../") {
-		return fmt.Errorf("path %q escapes ~/.claude", path)
+		return fmt.Errorf("path %q escapes the Codex home (~/.codex)", path)
 	}
 	return nil
 }
@@ -56,13 +56,12 @@ type Manager struct {
 }
 
 // NewManager creates a Manager with the given paths and excludes.
-// If claudeDir is empty, it defaults to ~/.claude. The scope determines which
-// path set counts as "default", so a sessions-scoped config is not shown or
-// reset against the full-scope list.
+// If claudeDir is empty, it defaults to the Codex home (config.BaseDir). The
+// scope determines which path set counts as "default", so a sessions-scoped
+// config is not shown or reset against the full-scope list.
 func NewManager(syncPaths, excludes []string, claudeDir, scope string) *Manager {
 	if claudeDir == "" {
-		home, _ := os.UserHomeDir()
-		claudeDir = filepath.Join(home, ".claude")
+		claudeDir = config.BaseDir()
 	}
 
 	defaults := DefaultSyncPaths(scope)
@@ -103,7 +102,7 @@ type AddResult struct {
 	AlreadyExists   bool
 	PathMissing     bool
 	ExcludesRemoved int
-	// Invalid is set when the path escapes ~/.claude; nothing was changed.
+	// Invalid is set when the path escapes the Codex home; nothing was changed.
 	Invalid error
 	// OutOfScope is set when the path is not reachable under the current
 	// sessions scope, so it would be filtered out before reaching the syncer.

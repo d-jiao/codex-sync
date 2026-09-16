@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -20,7 +21,6 @@ import (
 	"github.com/AlecAivazis/survey/v2"
 	"github.com/spf13/cobra"
 
-	"github.com/d-jiao/codex-sync/internal/claudesettings"
 	"github.com/d-jiao/codex-sync/internal/config"
 	"github.com/d-jiao/codex-sync/internal/crypto"
 	"github.com/d-jiao/codex-sync/internal/paths"
@@ -53,8 +53,8 @@ const (
 func main() {
 	rootCmd := &cobra.Command{
 		Use:     "codex-sync",
-		Short:   "Sync Claude Code sessions across devices",
-		Long:    `A CLI tool to sync your ~/.claude directory across devices using cloud storage with encryption.`,
+		Short:   "Sync Codex sessions across devices",
+		Long:    `A CLI tool to sync your Codex home (~/.codex, or $CODEX_HOME) across devices using cloud storage with encryption.`,
 		Version: version,
 	}
 
@@ -67,13 +67,9 @@ func main() {
 		statusCmd(),
 		diffCmd(),
 		conflictsCmd(),
-		rebuildHistoryCmd(),
 		resetCmd(),
-		migrateCmd(),
 		updateCmd(),
 		changelogCmd(),
-		mcpCmd(),
-		autoCmd(),
 		pathsCmd(),
 	)
 
@@ -87,17 +83,17 @@ func printBanner() {
 	fmt.Printf("  %sWelcome to Codex Sync!%s %sv%s%s\n", colorBold, colorReset, colorDim, version, colorReset)
 	fmt.Println()
 
-	// Block-style ASCII art - CLAUDE SYNC on one line
+	// Block-style ASCII art - CODEX SYNC on one line
 	fmt.Printf("%s", colorCyan)
-	fmt.Println("  ██████╗██╗      █████╗ ██╗   ██╗██████╗ ███████╗  ███████╗██╗   ██╗███╗   ██╗ ██████╗")
-	fmt.Println("  ██╔════╝██║     ██╔══██╗██║   ██║██╔══██╗██╔════╝  ██╔════╝╚██╗ ██╔╝████╗  ██║██╔════╝")
-	fmt.Println("  ██║     ██║     ███████║██║   ██║██║  ██║█████╗    ███████╗ ╚████╔╝ ██╔██╗ ██║██║     ")
-	fmt.Println("  ██║     ██║     ██╔══██║██║   ██║██║  ██║██╔══╝    ╚════██║  ╚██╔╝  ██║╚██╗██║██║     ")
-	fmt.Println("  ╚██████╗███████╗██║  ██║╚██████╔╝██████╔╝███████╗  ███████║   ██║   ██║ ╚████║╚██████╗")
-	fmt.Println("   ╚═════╝╚══════╝╚═╝  ╚═╝ ╚═════╝ ╚═════╝ ╚══════╝  ╚══════╝   ╚═╝   ╚═╝  ╚═══╝ ╚═════╝")
+	fmt.Println("  ██████╗ ██████╗ ██████╗ ███████╗██╗  ██╗  ███████╗██╗   ██╗███╗   ██╗ ██████╗")
+	fmt.Println("  ██╔════╝██╔═══██╗██╔══██╗██╔════╝╚██╗██╔╝  ██╔════╝╚██╗ ██╔╝████╗  ██║██╔════╝")
+	fmt.Println("  ██║     ██║   ██║██║  ██║█████╗   ╚███╔╝   ███████╗ ╚████╔╝ ██╔██╗ ██║██║     ")
+	fmt.Println("  ██║     ██║   ██║██║  ██║██╔══╝   ██╔██╗   ╚════██║  ╚██╔╝  ██║╚██╗██║██║     ")
+	fmt.Println("  ╚██████╗╚██████╔╝██████╔╝███████╗██╔╝ ██╗  ███████║   ██║   ██║ ╚████║╚██████╗")
+	fmt.Println("   ╚═════╝ ╚═════╝ ╚═════╝ ╚══════╝╚═╝  ╚═╝  ╚══════╝   ╚═╝   ╚═╝  ╚═══╝ ╚═════╝")
 	fmt.Printf("%s\n", colorReset)
 
-	fmt.Printf("  %sSync your Claude Code sessions across all your devices.%s\n", colorDim, colorReset)
+	fmt.Printf("  %sSync your Codex sessions across all your devices.%s\n", colorDim, colorReset)
 	fmt.Printf("  %sIssues & PRs welcome: %shttps://github.com/d-jiao/codex-sync%s\n", colorDim, colorCyan, colorReset)
 	fmt.Println()
 }
@@ -116,6 +112,30 @@ func printSuccess(text string) {
 
 func printWarning(text string) {
 	fmt.Printf("  %s%s%s\n", colorYellow, text, colorReset)
+}
+
+// reportSyncErrors prints per-file push/pull errors to w — stderr in practice,
+// even with -q, so the launchd log shows why the daily job stopped — and
+// returns a non-nil error when there were any, so `pull -q && push -q` halts
+// with a failing exit code. The list is printed exactly once; the pretty
+// summary only counts failures. A failed sync is not a usage mistake, so the
+// usage text is silenced for this error.
+func reportSyncErrors(cmd *cobra.Command, w io.Writer, errs []error) error {
+	if len(errs) == 0 {
+		return nil
+	}
+	if quiet {
+		for _, e := range errs {
+			fmt.Fprintf(w, "codex-sync: %v\n", e)
+		}
+	} else {
+		fmt.Fprintf(w, "\n%sErrors:%s\n", colorYellow, colorReset)
+		for _, e := range errs {
+			fmt.Fprintf(w, "  %s•%s %v\n", colorYellow, colorReset, e)
+		}
+	}
+	cmd.SilenceUsage = true
+	return fmt.Errorf("%d file(s) failed; see above", len(errs))
 }
 
 func initCmd() *cobra.Command {
@@ -175,7 +195,7 @@ Examples:
 
 	// Provider selection
 	cmd.Flags().StringVar(&provider, "provider", "", "Storage provider: r2, s3, gcs, s3-compatible, or webdav")
-	cmd.Flags().StringVar(&scope, "scope", "", "Sync scope: 'full' (default, everything) or 'sessions' (conversation history only)")
+	cmd.Flags().StringVar(&scope, "scope", "", "Sync scope: 'full' (default: sessions + config, rules, skills, memories) or 'sessions' (conversation data only)")
 	cmd.Flags().StringVar(&bucket, "bucket", "", "Bucket name")
 	cmd.Flags().BoolVar(&usePassphrase, "passphrase", false, "Derive encryption key from passphrase")
 	cmd.Flags().BoolVarP(&force, "force", "f", false, "Overwrite existing config/key without prompting")
@@ -257,15 +277,15 @@ func resolveScope(scope string) (string, error) {
 		prompt := &survey.Select{
 			Message: "What should be synced?",
 			Options: []string{
-				"Sessions only — conversation history (recommended for syncing across machines)",
-				"Everything — settings, plugins, skills, agents, and sessions",
+				"Everything — sessions, names, history, attachments, config.toml, rules, skills, memories (recommended)",
+				"Sessions only — conversations, names, history and attachments",
 			},
 		}
 		var c int
 		if err := survey.AskOne(prompt, &c); err != nil {
 			return "", err
 		}
-		if c == 0 {
+		if c == 1 {
 			return config.ScopeSessions, nil
 		}
 		return config.ScopeFull, nil
@@ -489,6 +509,8 @@ skipKeyGen:
 	}
 
 	// Done
+	fmt.Println()
+	printInfo("Codex home: " + config.BaseDir())
 	fmt.Println()
 	fmt.Println(colorGreen + "  Setup complete!" + colorReset)
 	fmt.Println()
@@ -1011,12 +1033,10 @@ func runWebDAVWizard(webdavURL, username, password, pathPrefix string) (*storage
 }
 
 func pushCmd() *cobra.Command {
-	var includeMCP bool
-
 	cmd := &cobra.Command{
 		Use:   "push",
 		Short: "Upload local changes to cloud storage",
-		Long:  `Encrypt and upload changed files from ~/.claude to cloud storage.`,
+		Long:  `Encrypt and upload changed files from ~/.codex to cloud storage.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg, err := config.Load()
 			if err != nil {
@@ -1092,38 +1112,23 @@ func pushCmd() *cobra.Command {
 					if len(parts) > 0 {
 						fmt.Printf("%s✓%s Push complete: %s\n", colorGreen, colorReset, strings.Join(parts, ", "))
 					}
-
-					if len(result.Errors) > 0 {
-						fmt.Printf("\n%sErrors:%s\n", colorYellow, colorReset)
-						for _, e := range result.Errors {
-							fmt.Printf("  %s•%s %v\n", colorYellow, colorReset, e)
-						}
-					}
 				}
 			}
 
-			// MCP sync if enabled
-			if includeMCP || cfg.IsMCPSyncEnabled() {
-				if err := runMCPPush(ctx, syncer); err != nil {
-					return err
-				}
-			}
-
-			return nil
+			return reportSyncErrors(cmd, os.Stderr, result.Errors)
 		},
 	}
 
-	cmd.Flags().BoolVar(&includeMCP, "include-mcp", false, "Also sync MCP server configs from ~/.claude.json")
 	return cmd
 }
 
 func pullCmd() *cobra.Command {
-	var dryRun, force, includeMCP, rebuildHistory bool
+	var dryRun, force, noDelete bool
 
 	cmd := &cobra.Command{
 		Use:   "pull",
 		Short: "Download remote changes from cloud storage",
-		Long: `Download and decrypt changed files from cloud storage to ~/.claude.
+		Long: `Download and decrypt changed files from cloud storage to ~/.codex.
 
 On first pull with existing local files, you'll be prompted to confirm
 before any files are overwritten. Use --dry-run to preview changes first.
@@ -1142,18 +1147,19 @@ Examples:
 			if err != nil {
 				return err
 			}
+			syncer.SetNoDelete(noDelete)
 
 			ctx := context.Background()
 
 			// Check for first pull with existing local files
 			if !syncer.HasState() {
-				hasExisting, err := hasExistingClaudeFiles(cfg)
+				hasExisting, err := hasExistingBaseFiles(cfg)
 				if err != nil {
 					return err
 				}
 
 				if hasExisting && !force {
-					return handleFirstPullWithExistingFiles(ctx, syncer, dryRun)
+					return handleFirstPullWithExistingFiles(ctx, cmd, syncer, dryRun)
 				}
 			}
 
@@ -1204,13 +1210,22 @@ Examples:
 			if !quiet {
 				fmt.Println() // Clear the progress line
 
-				if len(result.Downloaded) == 0 && len(result.Conflicts) == 0 && len(result.Errors) == 0 {
+				if len(result.Downloaded) == 0 && len(result.Merged) == 0 && len(result.Conflicts) == 0 && len(result.Errors) == 0 && len(result.Removed) == 0 && len(result.KeptLocal) == 0 {
 					// Already printed "Already up to date"
 				} else {
 					// Summary
 					var parts []string
 					if len(result.Downloaded) > 0 {
 						parts = append(parts, fmt.Sprintf("%s%d downloaded%s", colorGreen, len(result.Downloaded), colorReset))
+					}
+					if len(result.Merged) > 0 {
+						parts = append(parts, fmt.Sprintf("%s%d merged%s", colorGreen, len(result.Merged), colorReset))
+					}
+					if len(result.Removed) > 0 {
+						parts = append(parts, fmt.Sprintf("%s%d removed%s", colorYellow, len(result.Removed), colorReset))
+					}
+					if len(result.KeptLocal) > 0 {
+						parts = append(parts, fmt.Sprintf("%s%d kept%s", colorYellow, len(result.KeptLocal), colorReset))
 					}
 					if len(result.Conflicts) > 0 {
 						parts = append(parts, fmt.Sprintf("%s%d conflicts%s", colorYellow, len(result.Conflicts), colorReset))
@@ -1231,37 +1246,28 @@ Examples:
 						fmt.Printf("%sRun '%scodex-sync conflicts%s%s' to review and resolve.%s\n", colorDim, colorCyan, colorReset, colorDim, colorReset)
 					}
 
-					if len(result.Errors) > 0 {
-						fmt.Printf("\n%sErrors:%s\n", colorYellow, colorReset)
-						for _, e := range result.Errors {
-							fmt.Printf("  %s•%s %v\n", colorYellow, colorReset, e)
+					if len(result.Removed) > 0 {
+						fmt.Printf("\n%sRemoved (vanished from remote; moved to %s):%s\n", colorDim, config.TrashDirPath(), colorReset)
+						for _, p := range result.Removed {
+							fmt.Printf("  %s-%s %s\n", colorYellow, colorReset, p)
+						}
+					}
+					if len(result.KeptLocal) > 0 {
+						fmt.Printf("\n%sKept (vanished from remote but changed locally):%s\n", colorDim, colorReset)
+						for _, p := range result.KeptLocal {
+							fmt.Printf("  %s•%s %s\n", colorYellow, colorReset, p)
 						}
 					}
 				}
 			}
 
-			// MCP sync if enabled
-			if includeMCP || cfg.IsMCPSyncEnabled() {
-				if err := runMCPPull(ctx, syncer); err != nil {
-					return err
-				}
-			}
-
-			// Rebuild prompt history from the freshly-pulled session files.
-			if rebuildHistory && !dryRun {
-				if err := runHistoryRebuild(); err != nil {
-					return fmt.Errorf("rebuilding history: %w", err)
-				}
-			}
-
-			return nil
+			return reportSyncErrors(cmd, os.Stderr, result.Errors)
 		},
 	}
 
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Show what would be changed without making changes")
 	cmd.Flags().BoolVar(&force, "force", false, "Overwrite existing files without confirmation")
-	cmd.Flags().BoolVar(&includeMCP, "include-mcp", false, "Also sync MCP server configs from ~/.claude.json")
-	cmd.Flags().BoolVar(&rebuildHistory, "rebuild-history", false, "Rebuild ~/.claude/history.jsonl from session files after pulling")
+	cmd.Flags().BoolVar(&noDelete, "no-delete", false, "Never remove local files that vanished from the remote")
 
 	return cmd
 }
@@ -1348,7 +1354,7 @@ func diffCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "diff",
 		Short: "Show differences between local and remote",
-		Long:  `Compare local ~/.claude with remote cloud storage.`,
+		Long:  `Compare local ~/.codex with remote cloud storage.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg, err := config.Load()
 			if err != nil {
@@ -1441,10 +1447,10 @@ Examples:
   codex-sync conflicts --keep local # Keep all local versions
   codex-sync conflicts --keep remote # Keep all remote versions`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			claudeDir := config.ClaudeDir()
+			baseDir := config.BaseDir()
 
 			// Find all .conflict files
-			conflicts, err := findConflicts(claudeDir)
+			conflicts, err := findConflicts(baseDir)
 			if err != nil {
 				return err
 			}
@@ -1457,7 +1463,7 @@ Examples:
 			fmt.Printf("%sFound %d conflict(s):%s\n\n", colorYellow, len(conflicts), colorReset)
 
 			for i, c := range conflicts {
-				relOriginal, _ := filepath.Rel(claudeDir, c.OriginalPath)
+				relOriginal, _ := filepath.Rel(baseDir, c.OriginalPath)
 				fmt.Printf("  %s%d.%s %s\n", colorCyan, i+1, colorReset, relOriginal)
 				fmt.Printf("     %sConflict from: %s%s\n", colorDim, c.Timestamp, colorReset)
 			}
@@ -1476,11 +1482,11 @@ Examples:
 
 			// Batch resolve mode
 			if resolveAll != "" {
-				return batchResolveConflicts(conflicts, resolveAll, claudeDir, state)
+				return batchResolveConflicts(conflicts, resolveAll, baseDir, state)
 			}
 
 			// Interactive mode
-			return interactiveResolveConflicts(conflicts, claudeDir, state)
+			return interactiveResolveConflicts(conflicts, baseDir, state)
 		},
 	}
 
@@ -1490,10 +1496,10 @@ Examples:
 	return cmd
 }
 
-func findConflicts(claudeDir string) ([]conflictFile, error) {
+func findConflicts(baseDir string) ([]conflictFile, error) {
 	var conflicts []conflictFile
 
-	err := filepath.Walk(claudeDir, func(path string, info os.FileInfo, err error) error {
+	err := filepath.Walk(baseDir, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return nil // Skip errors
 		}
@@ -1525,7 +1531,7 @@ func findConflicts(claudeDir string) ([]conflictFile, error) {
 	return conflicts, err
 }
 
-func batchResolveConflicts(conflicts []conflictFile, keep string, claudeDir string, state *sync.SyncState) error {
+func batchResolveConflicts(conflicts []conflictFile, keep string, baseDir string, state *sync.SyncState) error {
 	keep = strings.ToLower(keep)
 	if keep != "local" && keep != "remote" {
 		return fmt.Errorf("--keep must be 'local' or 'remote'")
@@ -1550,7 +1556,7 @@ func batchResolveConflicts(conflicts []conflictFile, keep string, claudeDir stri
 		}
 
 		// Update state with the resolved file's hash
-		relPath, _ := filepath.Rel(claudeDir, c.OriginalPath)
+		relPath, _ := filepath.Rel(baseDir, c.OriginalPath)
 		if info, err := os.Stat(c.OriginalPath); err == nil {
 			if hash, err := sync.HashFile(c.OriginalPath); err == nil {
 				state.UpdateFile(relPath, info, hash)
@@ -1571,7 +1577,7 @@ func batchResolveConflicts(conflicts []conflictFile, keep string, claudeDir stri
 	return nil
 }
 
-func interactiveResolveConflicts(conflicts []conflictFile, claudeDir string, state *sync.SyncState) error {
+func interactiveResolveConflicts(conflicts []conflictFile, baseDir string, state *sync.SyncState) error {
 	reader := bufio.NewReader(os.Stdin)
 
 	fmt.Println("For each conflict, choose how to resolve:")
@@ -1584,7 +1590,7 @@ func interactiveResolveConflicts(conflicts []conflictFile, claudeDir string, sta
 
 	resolved := 0
 	for i, c := range conflicts {
-		relOriginal, _ := filepath.Rel(claudeDir, c.OriginalPath)
+		relOriginal, _ := filepath.Rel(baseDir, c.OriginalPath)
 
 		// Get file sizes for context
 		localInfo, _ := os.Stat(c.OriginalPath)
@@ -1716,15 +1722,15 @@ func resetCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "reset",
 		Short: "Reset codex-sync (clear data and start fresh)",
-		Long: `Reset codex-sync configuration and optionally clear remote/local data.
+		Long: `Reset codex-sync configuration and optionally clear remote data.
 
-Use this if you forgot your passphrase or want to start fresh.
+Use this if you forgot your passphrase or want to start fresh. A reset
+removes ~/.codex-sync/config.yaml, age-key.txt and state.json; it never
+touches ~/.codex or the files an earlier pull moved to ~/.codex-sync/trash/.
 
 Examples:
-  codex-sync reset                    # Clear local config only
-  codex-sync reset --remote           # Also delete all files from cloud storage
-  codex-sync reset --local            # Also clear local sync state
-  codex-sync reset --remote --local   # Full reset (nuclear option)`,
+  codex-sync reset            # Remove local config, key and sync state
+  codex-sync reset --remote   # Also delete all files from cloud storage`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			reader := bufio.NewReader(os.Stdin)
 
@@ -1738,7 +1744,8 @@ Examples:
 			if clearLocal {
 				fmt.Printf("  %s•%s Clear local sync state\n", colorYellow, colorReset)
 			}
-			fmt.Printf("  %s•%s Delete local config and encryption key\n", colorYellow, colorReset)
+			fmt.Printf("  %s•%s Delete local config, encryption key and sync state\n", colorYellow, colorReset)
+			fmt.Printf("  %s•%s Removed files kept in ~/.codex-sync/trash/ are NOT touched\n", colorYellow, colorReset)
 			fmt.Println()
 
 			if !force {
@@ -1793,12 +1800,15 @@ Examples:
 				}
 			}
 
-			// Always clear config and key
-			configDir := config.ConfigDirPath()
-			if err := os.RemoveAll(configDir); err != nil {
-				return fmt.Errorf("failed to remove config directory: %w", err)
+			// Always clear config, key and state — file by file, so the trash
+			// directory (copies pull moved out of the Codex home) survives.
+			removed, err := resetLocalFiles(config.ConfigDirPath())
+			if err != nil {
+				return err
 			}
-			printSuccess("Removed " + configDir)
+			for _, p := range removed {
+				printSuccess("Removed " + p)
+			}
 
 			fmt.Println()
 			printSuccess("Reset complete!")
@@ -1811,135 +1821,29 @@ Examples:
 	}
 
 	cmd.Flags().BoolVar(&clearRemote, "remote", false, "Delete all files from cloud storage bucket")
-	cmd.Flags().BoolVar(&clearLocal, "local", false, "Clear local sync state")
+	cmd.Flags().BoolVar(&clearLocal, "local", false, "Clear local sync state (every reset already does; kept for compatibility)")
 	cmd.Flags().BoolVar(&force, "force", false, "Skip confirmation prompt")
 
 	return cmd
 }
 
-func rebuildHistoryCmd() *cobra.Command {
-	return &cobra.Command{
-		Use:   "rebuild-history",
-		Short: "Rebuild ~/.claude/history.jsonl from session files",
-		Long: `Reconstruct the prompt history by merging the current history.jsonl with
-user prompts extracted from session files under ~/.claude/projects/.
-
-history.jsonl is synced as a single file, so pushes from two devices are
-last-writer-wins and one device's entries can be lost, breaking the /resume
-session picker. Session files sync cleanly (one file per session), so the
-full history can always be rebuilt from them.
-
-Existing entries are preserved as-is; recovered entries are merged in,
-deduplicated, and sorted by timestamp. The previous file is kept as
-history.jsonl.bak.`,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			return runHistoryRebuild()
-		},
+// resetLocalFiles removes codex-sync's own files (config, key, state) from
+// configDir one at a time rather than deleting the directory, so trash/ — the
+// copies pull moved out of the Codex home — is never touched. Missing files
+// are not an error. Returns the paths it removed.
+func resetLocalFiles(configDir string) ([]string, error) {
+	var removed []string
+	for _, name := range []string{config.ConfigFile, config.AgeKeyFile, config.StateFile} {
+		path := filepath.Join(configDir, name)
+		if err := os.Remove(path); err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			return removed, fmt.Errorf("failed to remove %s: %w", path, err)
+		}
+		removed = append(removed, path)
 	}
-}
-
-// runHistoryRebuild rebuilds history.jsonl and reports how many prompts were
-// recovered from session files.
-func runHistoryRebuild() error {
-	claudeDir, err := config.ClaudeDirE()
-	if err != nil {
-		return err
-	}
-	result, err := sync.RebuildHistory(claudeDir)
-	if err != nil {
-		return err
-	}
-	recovered := result.Merged - result.Existing
-	printSuccess(fmt.Sprintf("Rebuilt history.jsonl: %d entries (%d existing + %d recovered from sessions)",
-		result.Merged, result.Existing, recovered))
-	return nil
-}
-
-func migrateCmd() *cobra.Command {
-	cmd := &cobra.Command{
-		Use:   "migrate",
-		Short: "Rewrite legacy remote keys to portable path-mapped keys",
-		Long: `Re-upload this device's project files under portable, path-mapped remote
-keys and delete the legacy machine-specific keys.
-
-Older versions stored project sessions under keys derived from this machine's
-absolute paths (e.g. projects/-Users-alice-my-app/...), so sessions pulled on
-a device with a different username or layout were not resumable. New pushes
-use portable tokens (e.g. projects/${HOME}-my-app/...); migrate converts
-existing remote data in place.
-
-Run this once on every device. Keys owned by another device are left for that
-device's migrate run and reported as "left for other devices".`,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			cfg, err := config.Load()
-			if err != nil {
-				return err
-			}
-
-			syncer, err := sync.NewSyncer(cfg, quiet)
-			if err != nil {
-				return err
-			}
-
-			if !quiet {
-				syncer.SetProgressFunc(func(event sync.ProgressEvent) {
-					if event.Error != nil {
-						fmt.Printf("\r%s✗%s %s: %v\n", colorYellow, colorReset, event.Path, event.Error)
-						return
-					}
-					if event.Action == "upload" && !event.Complete {
-						progress := fmt.Sprintf("[%d/%d]", event.Current, event.Total)
-						shortPath := util.TruncatePath(event.Path, 50)
-						fmt.Printf("\r%s↻%s %s%s%s %s%s",
-							colorCyan, colorReset,
-							colorDim, progress, colorReset,
-							shortPath,
-							strings.Repeat(" ", 10))
-					}
-				})
-				fmt.Printf("%s⋯%s Scanning remote for legacy keys...\n", colorDim, colorReset)
-			}
-
-			result, err := syncer.MigratePaths(context.Background())
-			if err != nil {
-				return err
-			}
-
-			if !quiet {
-				fmt.Println()
-				if len(result.Migrated) == 0 && len(result.Foreign) == 0 && len(result.Errors) == 0 {
-					fmt.Printf("%s✓%s Nothing to migrate\n", colorGreen, colorReset)
-					return nil
-				}
-
-				var parts []string
-				if len(result.Migrated) > 0 {
-					parts = append(parts, fmt.Sprintf("%s%d migrated%s", colorGreen, len(result.Migrated), colorReset))
-				}
-				if len(result.Foreign) > 0 {
-					parts = append(parts, fmt.Sprintf("%s%d left for other devices%s", colorDim, len(result.Foreign), colorReset))
-				}
-				if len(result.Errors) > 0 {
-					parts = append(parts, fmt.Sprintf("%s%d failed%s", colorYellow, len(result.Errors), colorReset))
-				}
-				fmt.Printf("%s✓%s Migration complete: %s\n", colorGreen, colorReset, strings.Join(parts, ", "))
-
-				if len(result.Foreign) > 0 {
-					fmt.Printf("\n%sRun 'codex-sync migrate' on your other devices to convert the remaining keys.%s\n", colorDim, colorReset)
-				}
-				if len(result.Errors) > 0 {
-					fmt.Printf("\n%sErrors:%s\n", colorYellow, colorReset)
-					for _, e := range result.Errors {
-						fmt.Printf("  %s•%s %v\n", colorYellow, colorReset, e)
-					}
-				}
-			}
-
-			return nil
-		},
-	}
-
-	return cmd
+	return removed, nil
 }
 
 // GitHubRelease represents a GitHub release from the API
@@ -1969,6 +1873,10 @@ Examples:
 			// Get latest release from GitHub
 			release, err := getLatestRelease()
 			if err != nil {
+				if errors.Is(err, errNoReleases) {
+					fmt.Printf("%sNo published releases yet.%s Update from source:\n  git pull && make build && make install\n", colorYellow, colorReset)
+					return nil
+				}
 				return fmt.Errorf("failed to check for updates: %w", err)
 			}
 
@@ -2051,8 +1959,21 @@ Examples:
 	return cmd
 }
 
+// githubRepo is where codex-sync publishes releases (update/changelog read from it).
+const githubRepo = "d-jiao/codex-sync"
+
+var errNoReleases = errors.New("no published releases yet")
+
+func latestReleaseURL() string {
+	return "https://api.github.com/repos/" + githubRepo + "/releases/latest"
+}
+
+func releasesURL(limit int) string {
+	return fmt.Sprintf("https://api.github.com/repos/%s/releases?per_page=%d", githubRepo, limit)
+}
+
 func getLatestRelease() (*GitHubRelease, error) {
-	url := "https://api.github.com/repos/tawanorg/codex-sync/releases/latest"
+	url := latestReleaseURL()
 
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
@@ -2068,6 +1989,9 @@ func getLatestRelease() (*GitHubRelease, error) {
 	}
 	defer func() { _ = resp.Body.Close() }()
 
+	if resp.StatusCode == http.StatusNotFound {
+		return nil, errNoReleases
+	}
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("GitHub API returned status %d", resp.StatusCode)
 	}
@@ -2248,7 +2172,7 @@ func handleKeyMismatch() (keyMismatchAction, error) {
 		Message: "What would you like to do?",
 		Options: []string{
 			"Try a different passphrase",
-			"Clear remote files and start fresh (your local ~/.claude will be pushed)",
+			"Clear remote files and start fresh (your local ~/.codex will be pushed)",
 			"Abort setup",
 		},
 	}
@@ -2286,14 +2210,14 @@ func clearRemoteStorage(ctx context.Context, store storage.Storage) error {
 	return store.DeleteBatch(ctx, keys)
 }
 
-// hasExistingClaudeFiles checks if ~/.claude has any files that would be synced
-func hasExistingClaudeFiles(cfg *config.Config) (bool, error) {
-	claudeDir := config.ClaudeDir()
-	if _, err := os.Stat(claudeDir); os.IsNotExist(err) {
+// hasExistingBaseFiles checks if ~/.codex has any files that would be synced
+func hasExistingBaseFiles(cfg *config.Config) (bool, error) {
+	baseDir := config.BaseDir()
+	if _, err := os.Stat(baseDir); os.IsNotExist(err) {
 		return false, nil
 	}
 
-	files, err := sync.GetLocalFiles(claudeDir, cfg.GetEffectiveSyncPaths())
+	files, err := sync.GetLocalFiles(baseDir, cfg.GetEffectiveSyncPaths())
 	if err != nil {
 		return false, err
 	}
@@ -2303,15 +2227,17 @@ func hasExistingClaudeFiles(cfg *config.Config) (bool, error) {
 
 // handleFirstPullWithExistingFiles handles the case where the user is pulling
 // for the first time but already has local files that could be overwritten
-func handleFirstPullWithExistingFiles(ctx context.Context, syncer *sync.Syncer, dryRun bool) error {
+func handleFirstPullWithExistingFiles(ctx context.Context, cmd *cobra.Command, syncer *sync.Syncer, dryRun bool) error {
 	// Get preview of what would happen
 	preview, err := syncer.PreviewPull(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to preview pull: %w", err)
 	}
 
-	// If nothing would be affected, proceed normally
-	if len(preview.WouldOverwrite) == 0 && len(preview.WouldDownload) == 0 && len(preview.WouldConflict) == 0 {
+	// If nothing would be affected, proceed normally. Merges count: a first
+	// pull whose only work is unioning session_index.jsonl or history.jsonl
+	// must still run rather than report "up to date".
+	if len(preview.WouldOverwrite) == 0 && len(preview.WouldDownload) == 0 && len(preview.WouldConflict) == 0 && len(preview.WouldMerge) == 0 {
 		if !quiet {
 			fmt.Printf("%s✓%s Already up to date\n", colorGreen, colorReset)
 		}
@@ -2320,7 +2246,7 @@ func handleFirstPullWithExistingFiles(ctx context.Context, syncer *sync.Syncer, 
 
 	// Show warning
 	fmt.Println()
-	printWarning("Local ~/.claude already has files that would be affected:")
+	printWarning("Local ~/.codex already has files that would be affected:")
 	fmt.Println()
 
 	// Show files that would be overwritten
@@ -2334,6 +2260,11 @@ func handleFirstPullWithExistingFiles(ctx context.Context, syncer *sync.Syncer, 
 	// Show files that would be downloaded (new)
 	for _, f := range preview.WouldDownload {
 		fmt.Printf("  %sNEW%s        %s\n", colorGreen, colorReset, f.Path)
+	}
+
+	// Show shared index files that would be unioned with the local copy
+	for _, f := range preview.WouldMerge {
+		fmt.Printf("  %sMERGE%s      %s %s(union of local and remote)%s\n", colorGreen, colorReset, f.Path, colorDim, colorReset)
 	}
 
 	// Show files that would be kept
@@ -2383,12 +2314,12 @@ func handleFirstPullWithExistingFiles(ctx context.Context, syncer *sync.Syncer, 
 		}
 		printSuccess("Backup created: " + backupDir)
 		fmt.Println()
-		return executePull(ctx, syncer)
+		return executePull(ctx, cmd, syncer)
 
 	case 1:
 		// Proceed without backup
 		fmt.Println()
-		return executePull(ctx, syncer)
+		return executePull(ctx, cmd, syncer)
 
 	default:
 		// Abort
@@ -2397,11 +2328,11 @@ func handleFirstPullWithExistingFiles(ctx context.Context, syncer *sync.Syncer, 
 	}
 }
 
-// createBackup creates a backup of the current ~/.claude directory
+// createBackup creates a backup of the current ~/.codex directory
 func createBackup(syncPaths []string) (string, error) {
-	claudeDir := config.ClaudeDir()
+	baseDir := config.BaseDir()
 	timestamp := time.Now().Format("20060102-150405")
-	backupDir := claudeDir + ".backup." + timestamp
+	backupDir := baseDir + ".backup." + timestamp
 
 	// Create backup directory
 	if err := os.MkdirAll(backupDir, 0700); err != nil {
@@ -2409,13 +2340,13 @@ func createBackup(syncPaths []string) (string, error) {
 	}
 
 	// Copy all syncable files to backup
-	files, err := sync.GetLocalFiles(claudeDir, syncPaths)
+	files, err := sync.GetLocalFiles(baseDir, syncPaths)
 	if err != nil {
 		return "", fmt.Errorf("failed to list files: %w", err)
 	}
 
 	for relPath := range files {
-		srcPath := filepath.Join(claudeDir, relPath)
+		srcPath := filepath.Join(baseDir, relPath)
 		dstPath := filepath.Join(backupDir, relPath)
 
 		// Ensure destination directory exists
@@ -2446,7 +2377,7 @@ func showPullPreview(ctx context.Context, syncer *sync.Syncer) error {
 	}
 
 	// If nothing would happen
-	total := len(preview.WouldDownload) + len(preview.WouldOverwrite) + len(preview.WouldConflict)
+	total := len(preview.WouldDownload) + len(preview.WouldOverwrite) + len(preview.WouldConflict) + len(preview.WouldMerge) + len(preview.WouldRemove)
 	if total == 0 {
 		fmt.Printf("%s✓%s Already up to date (dry run)\n", colorGreen, colorReset)
 		return nil
@@ -2460,6 +2391,14 @@ func showPullPreview(ctx context.Context, syncer *sync.Syncer) error {
 		fmt.Printf("Would download (%d new files):\n", len(preview.WouldDownload))
 		for _, f := range preview.WouldDownload {
 			fmt.Printf("  %s+%s %s (%s)\n", colorGreen, colorReset, f.Path, util.FormatSize(f.RemoteSize))
+		}
+		fmt.Println()
+	}
+
+	if len(preview.WouldMerge) > 0 {
+		fmt.Printf("Would merge (%d shared index files, union of local and remote):\n", len(preview.WouldMerge))
+		for _, f := range preview.WouldMerge {
+			fmt.Printf("  %s∪%s %s\n", colorGreen, colorReset, f.Path)
 		}
 		fmt.Println()
 	}
@@ -2493,6 +2432,21 @@ func showPullPreview(ctx context.Context, syncer *sync.Syncer) error {
 		fmt.Println()
 	}
 
+	if len(preview.WouldRemove) > 0 {
+		fmt.Printf("Would remove (%d files vanished from remote; moved to %s):\n", len(preview.WouldRemove), config.TrashDirPath())
+		for _, f := range preview.WouldRemove {
+			fmt.Printf("  %s-%s %s (%s)\n", colorYellow, colorReset, f.Path, util.FormatSize(f.LocalSize))
+		}
+		fmt.Println()
+	}
+	if len(preview.WouldKeepLocal) > 0 {
+		fmt.Printf("Would keep (%d files vanished from remote but changed locally):\n", len(preview.WouldKeepLocal))
+		for _, f := range preview.WouldKeepLocal {
+			fmt.Printf("  %s•%s %s\n", colorYellow, colorReset, f.Path)
+		}
+		fmt.Println()
+	}
+
 	// Summary
 	fmt.Printf("%sSummary:%s %d would download, %d would overwrite, %d conflicts, %d unchanged\n",
 		colorBold, colorReset,
@@ -2507,7 +2461,7 @@ func showPullPreview(ctx context.Context, syncer *sync.Syncer) error {
 }
 
 // executePull performs the actual pull operation with progress output
-func executePull(ctx context.Context, syncer *sync.Syncer) error {
+func executePull(ctx context.Context, cmd *cobra.Command, syncer *sync.Syncer) error {
 	if !quiet {
 		syncer.SetProgressFunc(func(event sync.ProgressEvent) {
 			if event.Error != nil {
@@ -2549,12 +2503,21 @@ func executePull(ctx context.Context, syncer *sync.Syncer) error {
 	if !quiet {
 		fmt.Println()
 
-		if len(result.Downloaded) == 0 && len(result.Conflicts) == 0 && len(result.Errors) == 0 {
+		if len(result.Downloaded) == 0 && len(result.Merged) == 0 && len(result.Conflicts) == 0 && len(result.Errors) == 0 && len(result.Removed) == 0 && len(result.KeptLocal) == 0 {
 			// Already printed "Already up to date"
 		} else {
 			var parts []string
 			if len(result.Downloaded) > 0 {
 				parts = append(parts, fmt.Sprintf("%s%d downloaded%s", colorGreen, len(result.Downloaded), colorReset))
+			}
+			if len(result.Merged) > 0 {
+				parts = append(parts, fmt.Sprintf("%s%d merged%s", colorGreen, len(result.Merged), colorReset))
+			}
+			if len(result.Removed) > 0 {
+				parts = append(parts, fmt.Sprintf("%s%d removed%s", colorYellow, len(result.Removed), colorReset))
+			}
+			if len(result.KeptLocal) > 0 {
+				parts = append(parts, fmt.Sprintf("%s%d kept%s", colorYellow, len(result.KeptLocal), colorReset))
 			}
 			if len(result.Conflicts) > 0 {
 				parts = append(parts, fmt.Sprintf("%s%d conflicts%s", colorYellow, len(result.Conflicts), colorReset))
@@ -2575,16 +2538,22 @@ func executePull(ctx context.Context, syncer *sync.Syncer) error {
 				fmt.Printf("%sRun '%scodex-sync conflicts%s%s' to review and resolve.%s\n", colorDim, colorCyan, colorReset, colorDim, colorReset)
 			}
 
-			if len(result.Errors) > 0 {
-				fmt.Printf("\n%sErrors:%s\n", colorYellow, colorReset)
-				for _, e := range result.Errors {
-					fmt.Printf("  %s•%s %v\n", colorYellow, colorReset, e)
+			if len(result.Removed) > 0 {
+				fmt.Printf("\n%sRemoved (vanished from remote; moved to %s):%s\n", colorDim, config.TrashDirPath(), colorReset)
+				for _, p := range result.Removed {
+					fmt.Printf("  %s-%s %s\n", colorYellow, colorReset, p)
+				}
+			}
+			if len(result.KeptLocal) > 0 {
+				fmt.Printf("\n%sKept (vanished from remote but changed locally):%s\n", colorDim, colorReset)
+				for _, p := range result.KeptLocal {
+					fmt.Printf("  %s•%s %s\n", colorYellow, colorReset, p)
 				}
 			}
 		}
 	}
 
-	return nil
+	return reportSyncErrors(cmd, os.Stderr, result.Errors)
 }
 
 func changelogCmd() *cobra.Command {
@@ -2603,6 +2572,10 @@ Examples:
 
 			releases, err := getAllReleases(limit)
 			if err != nil {
+				if errors.Is(err, errNoReleases) {
+					fmt.Printf("%sNo published releases yet.%s Update from source:\n  git pull && make build && make install\n", colorYellow, colorReset)
+					return nil
+				}
 				return fmt.Errorf("failed to fetch changelog: %w", err)
 			}
 
@@ -2613,7 +2586,7 @@ Examples:
 
 			// Header
 			fmt.Printf("%s╭─────────────────────────────────────────────────────────────╮%s\n", colorCyan, colorReset)
-			fmt.Printf("%s│%s  %sCLAUDE-SYNC CHANGELOG%s                                      %s│%s\n", colorCyan, colorReset, colorBold, colorReset, colorCyan, colorReset)
+			fmt.Printf("%s│%s  %sCODEX-SYNC CHANGELOG%s                                       %s│%s\n", colorCyan, colorReset, colorBold, colorReset, colorCyan, colorReset)
 			fmt.Printf("%s╰─────────────────────────────────────────────────────────────╯%s\n\n", colorCyan, colorReset)
 
 			currentVersion := strings.TrimPrefix(version, "v")
@@ -2674,7 +2647,7 @@ type GitHubReleaseWithBody struct {
 }
 
 func getAllReleases(limit int) ([]GitHubReleaseWithBody, error) {
-	url := fmt.Sprintf("https://api.github.com/repos/tawanorg/codex-sync/releases?per_page=%d", limit)
+	url := releasesURL(limit)
 
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
@@ -2690,6 +2663,9 @@ func getAllReleases(limit int) ([]GitHubReleaseWithBody, error) {
 	}
 	defer func() { _ = resp.Body.Close() }()
 
+	if resp.StatusCode == http.StatusNotFound {
+		return nil, errNoReleases
+	}
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("GitHub API returned status %d", resp.StatusCode)
 	}
@@ -2732,429 +2708,17 @@ func printReleaseBody(body string) {
 	}
 }
 
-// MCP sync commands
-
-func mcpCmd() *cobra.Command {
-	cmd := &cobra.Command{
-		Use:   "mcp",
-		Short: "Manage MCP server sync",
-		Long:  `Sync global MCP server configurations from ~/.claude.json across devices.`,
-	}
-	cmd.AddCommand(
-		mcpStatusCmd(),
-		mcpEnableCmd(),
-		mcpDisableCmd(),
-		mcpListCmd(),
-		mcpPushCmd(),
-		mcpPullCmd(),
-	)
-	return cmd
-}
-
-func mcpStatusCmd() *cobra.Command {
-	return &cobra.Command{
-		Use:   "status",
-		Short: "Show MCP sync settings and local server state",
-		RunE: func(cmd *cobra.Command, args []string) error {
-			cfg, err := config.Load()
-			if err != nil {
-				return err
-			}
-
-			// Auto-sync setting
-			if cfg.IsMCPSyncEnabled() {
-				fmt.Printf("  Auto-sync  %s✓ enabled%s  (included in every push/pull)\n", colorGreen, colorReset)
-			} else {
-				fmt.Printf("  Auto-sync  %s✗ disabled%s  (use --include-mcp or 'mcp push/pull')\n", colorDim, colorReset)
-			}
-
-			// Local server count + pending changes
-			syncer, err := sync.NewSyncer(cfg, quiet)
-			if err != nil {
-				return err
-			}
-			ctx := context.Background()
-			status, err := syncer.MCPStatus(ctx)
-			if err != nil {
-				return err
-			}
-
-			if status.ServerCount == 0 {
-				fmt.Printf("  Servers    %s0 servers%s in %s\n", colorDim, colorReset, config.ClaudeJSONPath())
-			} else {
-				fmt.Printf("  Servers    %d configured\n", status.ServerCount)
-			}
-
-			if status.HasChanges {
-				fmt.Printf("  Changes    %s● unpushed local changes%s\n", colorYellow, colorReset)
-			} else {
-				fmt.Printf("  Changes    %s✓ in sync%s\n", colorGreen, colorReset)
-			}
-
-			fmt.Printf("\n  %smcp enable%s   — auto-include in every push/pull\n", colorDim, colorReset)
-			fmt.Printf("  %smcp disable%s  — manual only\n", colorDim, colorReset)
-
-			return nil
-		},
-	}
-}
-
-func mcpEnableCmd() *cobra.Command {
-	return &cobra.Command{
-		Use:   "enable",
-		Short: "Enable automatic MCP sync on every push/pull (syncs now too)",
-		RunE: func(cmd *cobra.Command, args []string) error {
-			cfg, err := config.Load()
-			if err != nil {
-				return err
-			}
-
-			cfg.SetMCPSync(true)
-			if err := config.Save(cfg); err != nil {
-				return err
-			}
-			fmt.Printf("%s✓%s MCP auto-sync enabled.\n", colorGreen, colorReset)
-
-			// Push current state immediately
-			syncer, err := sync.NewSyncer(cfg, quiet)
-			if err != nil {
-				return err
-			}
-			ctx := context.Background()
-			return runMCPPush(ctx, syncer)
-		},
-	}
-}
-
-func mcpDisableCmd() *cobra.Command {
-	return &cobra.Command{
-		Use:   "disable",
-		Short: "Disable automatic MCP sync on every push/pull",
-		RunE: func(cmd *cobra.Command, args []string) error {
-			cfg, err := config.Load()
-			if err != nil {
-				return err
-			}
-
-			cfg.SetMCPSync(false)
-			if err := config.Save(cfg); err != nil {
-				return err
-			}
-			fmt.Printf("%s✓%s MCP sync disabled. Use --include-mcp flag for one-time sync.\n", colorGreen, colorReset)
-			return nil
-		},
-	}
-}
-
-func mcpListCmd() *cobra.Command {
-	return &cobra.Command{
-		Use:   "list",
-		Short: "List local MCP server configurations",
-		RunE: func(cmd *cobra.Command, args []string) error {
-			cfg, err := config.Load()
-			if err != nil {
-				return err
-			}
-
-			syncer, err := sync.NewSyncer(cfg, quiet)
-			if err != nil {
-				return err
-			}
-
-			ctx := context.Background()
-			status, err := syncer.MCPStatus(ctx)
-			if err != nil {
-				return err
-			}
-
-			if status.ServerCount == 0 {
-				fmt.Printf("%s⋯%s No MCP servers found in %s\n", colorDim, colorReset, config.ClaudeJSONPath())
-				return nil
-			}
-
-			fmt.Printf("%sMCP Servers%s (%d total):\n\n", colorBold, colorReset, status.ServerCount)
-			for name := range status.Servers {
-				syncMark := fmt.Sprintf("%s●%s", colorGreen, colorReset)
-				if status.HasChanges {
-					syncMark = fmt.Sprintf("%s○%s", colorYellow, colorReset)
-				}
-				fmt.Printf("  %s %s\n", syncMark, name)
-			}
-
-			if status.HasChanges {
-				fmt.Printf("\n%s○ = has local changes not yet pushed%s\n", colorDim, colorReset)
-			}
-
-			return nil
-		},
-	}
-}
-
-func mcpPushCmd() *cobra.Command {
-	return &cobra.Command{
-		Use:   "push",
-		Short: "Push MCP server configs to cloud storage",
-		RunE: func(cmd *cobra.Command, args []string) error {
-			cfg, err := config.Load()
-			if err != nil {
-				return err
-			}
-
-			syncer, err := sync.NewSyncer(cfg, quiet)
-			if err != nil {
-				return err
-			}
-
-			ctx := context.Background()
-			return runMCPPush(ctx, syncer)
-		},
-	}
-}
-
-func mcpPullCmd() *cobra.Command {
-	return &cobra.Command{
-		Use:   "pull",
-		Short: "Pull MCP server configs from cloud storage",
-		RunE: func(cmd *cobra.Command, args []string) error {
-			cfg, err := config.Load()
-			if err != nil {
-				return err
-			}
-
-			syncer, err := sync.NewSyncer(cfg, quiet)
-			if err != nil {
-				return err
-			}
-
-			ctx := context.Background()
-			return runMCPPull(ctx, syncer)
-		},
-	}
-}
-
-func runMCPPush(ctx context.Context, syncer *sync.Syncer) error {
-	result, err := syncer.PushMCP(ctx)
-	if err != nil {
-		return fmt.Errorf("MCP push failed: %w", err)
-	}
-
-	if !quiet {
-		if result.Unchanged {
-			fmt.Printf("%s✓%s MCP servers: no changes to push\n", colorGreen, colorReset)
-		} else {
-			fmt.Printf("%s✓%s MCP servers: %s%d servers pushed%s\n",
-				colorGreen, colorReset, colorGreen, result.ServersPushed, colorReset)
-		}
-	}
-	return nil
-}
-
-func runMCPPull(ctx context.Context, syncer *sync.Syncer) error {
-	result, err := syncer.PullMCP(ctx)
-	if err != nil {
-		return fmt.Errorf("MCP pull failed: %w", err)
-	}
-
-	if !quiet {
-		if result.NoRemote {
-			fmt.Printf("%s⋯%s MCP servers: no remote data found\n", colorDim, colorReset)
-			return nil
-		}
-
-		var parts []string
-		if len(result.Added) > 0 {
-			parts = append(parts, fmt.Sprintf("%s%d added%s", colorGreen, len(result.Added), colorReset))
-			for _, name := range result.Added {
-				fmt.Printf("  %s+%s %s\n", colorGreen, colorReset, name)
-			}
-		}
-		if len(result.Updated) > 0 {
-			parts = append(parts, fmt.Sprintf("%s%d updated%s", colorCyan, len(result.Updated), colorReset))
-			for _, name := range result.Updated {
-				fmt.Printf("  %s~%s %s\n", colorCyan, colorReset, name)
-			}
-		}
-		if len(result.Kept) > 0 {
-			parts = append(parts, fmt.Sprintf("%d unchanged", len(result.Kept)))
-		}
-		if len(result.Conflicts) > 0 {
-			parts = append(parts, fmt.Sprintf("%s%d conflicts%s", colorYellow, len(result.Conflicts), colorReset))
-			for _, c := range result.Conflicts {
-				fmt.Printf("  %s!%s %s (kept local version)\n", colorYellow, colorReset, c.Key)
-			}
-		}
-
-		if len(parts) > 0 {
-			fmt.Printf("%s✓%s MCP pull complete: %s\n", colorGreen, colorReset, strings.Join(parts, ", "))
-		} else {
-			fmt.Printf("%s✓%s MCP servers: already up to date\n", colorGreen, colorReset)
-		}
-	}
-	return nil
-}
-
-// autoCmd manages auto-sync hooks in Claude Code settings
-func autoCmd() *cobra.Command {
-	cmd := &cobra.Command{
-		Use:   "auto",
-		Short: "Manage auto-sync hooks for Claude Code",
-		Long: `Install or remove codex-sync hooks that automatically pull on session start
-and push on session end. Hooks are stored in ~/.claude/settings.json.`,
-	}
-
-	cmd.AddCommand(
-		autoEnableCmd(),
-		autoDisableCmd(),
-		autoStatusCmd(),
-	)
-
-	return cmd
-}
-
-func autoEnableCmd() *cobra.Command {
-	var dryRun bool
-
-	cmd := &cobra.Command{
-		Use:   "enable",
-		Short: "Install auto-sync hooks into Claude Code",
-		Long: `Adds hooks to ~/.claude/settings.json:
-  - SessionStart: runs "codex-sync pull -q" when a session begins
-  - Stop: runs "codex-sync push -q" when a session ends
-
-Existing hooks are preserved. This command is idempotent.`,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			path := claudesettings.SettingsPath("")
-
-			settings, err := claudesettings.Load(path)
-			if err != nil {
-				return fmt.Errorf("failed to load settings: %w", err)
-			}
-
-			changed := settings.EnableAutoSync()
-
-			if !changed {
-				if !quiet {
-					fmt.Printf("%s✓%s Auto-sync hooks already installed\n", colorGreen, colorReset)
-				}
-				return nil
-			}
-
-			if dryRun {
-				fmt.Printf("%s⋯%s Dry run: would install auto-sync hooks:\n", colorDim, colorReset)
-				fmt.Printf("    SessionStart → %s\n", claudesettings.HookCommandPull)
-				fmt.Printf("    Stop → %s\n", claudesettings.HookCommandPush)
-				return nil
-			}
-
-			if err := settings.Save(path); err != nil {
-				return fmt.Errorf("failed to save settings: %w", err)
-			}
-
-			if !quiet {
-				fmt.Printf("%s✓%s Auto-sync hooks installed:\n", colorGreen, colorReset)
-				fmt.Printf("    SessionStart → %s\n", claudesettings.HookCommandPull)
-				fmt.Printf("    Stop → %s\n", claudesettings.HookCommandPush)
-			}
-
-			return nil
-		},
-	}
-
-	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Show what would be changed without modifying files")
-
-	return cmd
-}
-
-func autoDisableCmd() *cobra.Command {
-	var dryRun bool
-
-	cmd := &cobra.Command{
-		Use:   "disable",
-		Short: "Remove auto-sync hooks from Claude Code",
-		Long: `Removes codex-sync hooks from ~/.claude/settings.json.
-Other hooks are preserved. This command is idempotent.`,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			path := claudesettings.SettingsPath("")
-
-			settings, err := claudesettings.Load(path)
-			if err != nil {
-				return fmt.Errorf("failed to load settings: %w", err)
-			}
-
-			changed := settings.DisableAutoSync()
-
-			if !changed {
-				if !quiet {
-					fmt.Printf("%s✓%s Auto-sync hooks not installed\n", colorGreen, colorReset)
-				}
-				return nil
-			}
-
-			if dryRun {
-				fmt.Printf("%s⋯%s Dry run: would remove auto-sync hooks\n", colorDim, colorReset)
-				return nil
-			}
-
-			if err := settings.Save(path); err != nil {
-				return fmt.Errorf("failed to save settings: %w", err)
-			}
-
-			if !quiet {
-				fmt.Printf("%s✓%s Auto-sync hooks removed\n", colorGreen, colorReset)
-			}
-
-			return nil
-		},
-	}
-
-	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Show what would be changed without modifying files")
-
-	return cmd
-}
-
-func autoStatusCmd() *cobra.Command {
-	return &cobra.Command{
-		Use:   "status",
-		Short: "Show auto-sync hook status",
-		RunE: func(cmd *cobra.Command, args []string) error {
-			path := claudesettings.SettingsPath("")
-
-			settings, err := claudesettings.Load(path)
-			if err != nil {
-				return fmt.Errorf("failed to load settings: %w", err)
-			}
-
-			status := settings.AutoSyncStatus()
-
-			if status.Enabled {
-				fmt.Printf("%s✓%s Auto-sync: %senabled%s\n", colorGreen, colorReset, colorGreen, colorReset)
-				if status.HasSessionStart {
-					fmt.Printf("    SessionStart → %s\n", claudesettings.HookCommandPull)
-				}
-				if status.HasStop {
-					fmt.Printf("    Stop → %s\n", claudesettings.HookCommandPush)
-				}
-			} else {
-				fmt.Printf("%s⋯%s Auto-sync: %snot installed%s\n", colorDim, colorReset, colorDim, colorReset)
-				fmt.Printf("    Run '%scodex-sync auto enable%s' to install hooks\n", colorCyan, colorReset)
-			}
-
-			return nil
-		},
-	}
-}
-
 // pathsCmd manages sync paths and exclude filters
 func pathsCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "paths",
 		Short: "Manage sync paths and exclude filters",
-		Long: `Control which paths under ~/.claude/ are synced.
+		Long: `Control which paths under ~/.codex/ are synced.
 
 Effective sync = sync_list − exclude_list
 
 Use 'paths add' to include a path, 'paths remove' to exclude it.
-Use 'paths exclude' for sub-path glob filters (e.g., skip node_modules inside plugins/).`,
+Use 'paths exclude' for sub-path glob filters (e.g., skip node_modules inside skills/).`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runPathsList()
 		},
@@ -3187,7 +2751,7 @@ func runPathsList() error {
 		return err
 	}
 
-	mgr := paths.NewManager(cfg.SyncPaths, cfg.Exclude, config.ClaudeDir(), cfg.Scope)
+	mgr := paths.NewManager(cfg.SyncPaths, cfg.Exclude, config.BaseDir(), cfg.Scope)
 	status := mgr.Status()
 
 	source := "default"
@@ -3247,7 +2811,7 @@ func pathsAddCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "add <path>",
 		Short: "Add a path to sync",
-		Long: `Add a relative path under ~/.claude/ to the sync list.
+		Long: `Add a relative path under ~/.codex/ to the sync list.
 
 If the path was previously removed (and has an exclude), the
 conflicting exclude is automatically removed.`,
@@ -3258,7 +2822,7 @@ conflicting exclude is automatically removed.`,
 				return err
 			}
 
-			mgr := paths.NewManager(cfg.SyncPaths, cfg.Exclude, config.ClaudeDir(), cfg.Scope)
+			mgr := paths.NewManager(cfg.SyncPaths, cfg.Exclude, config.BaseDir(), cfg.Scope)
 			result := mgr.Add(args[0])
 
 			if result.Invalid != nil {
@@ -3279,7 +2843,7 @@ conflicting exclude is automatically removed.`,
 			}
 
 			if result.PathMissing {
-				fmt.Printf("%s!%s %s does not exist under ~/.claude (adding anyway)\n", colorYellow, colorReset, args[0])
+				fmt.Printf("%s!%s %s does not exist under ~/.codex (adding anyway)\n", colorYellow, colorReset, args[0])
 			}
 
 			cfg.SyncPaths = mgr.SyncPaths()
@@ -3313,7 +2877,7 @@ Custom paths are simply removed from the list.`,
 				return err
 			}
 
-			mgr := paths.NewManager(cfg.SyncPaths, cfg.Exclude, config.ClaudeDir(), cfg.Scope)
+			mgr := paths.NewManager(cfg.SyncPaths, cfg.Exclude, config.BaseDir(), cfg.Scope)
 
 			if !mgr.HasPath(args[0]) {
 				fmt.Printf("%s!%s %s is not in the sync list\n", colorYellow, colorReset, args[0])
@@ -3367,7 +2931,7 @@ Glob syntax: dir/*, dir/**, **/*.ext`,
 				return err
 			}
 
-			mgr := paths.NewManager(cfg.SyncPaths, cfg.Exclude, config.ClaudeDir(), cfg.Scope)
+			mgr := paths.NewManager(cfg.SyncPaths, cfg.Exclude, config.BaseDir(), cfg.Scope)
 			result := mgr.AddExclude(args[0])
 
 			if result.IsSyncPath {
@@ -3403,7 +2967,7 @@ func pathsUnexcludeCmd() *cobra.Command {
 				return err
 			}
 
-			mgr := paths.NewManager(cfg.SyncPaths, cfg.Exclude, config.ClaudeDir(), cfg.Scope)
+			mgr := paths.NewManager(cfg.SyncPaths, cfg.Exclude, config.BaseDir(), cfg.Scope)
 			result := mgr.RemoveExclude(args[0])
 
 			if result.NotFound {

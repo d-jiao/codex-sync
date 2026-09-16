@@ -1,76 +1,91 @@
-<div align="center">
+# codex-sync
 
-<img src="assets/banner.svg" alt="Claude Sync" width="100%">
+Encrypted cross-device sync for OpenAI Codex local state. Continue a Codex
+conversation on another Mac; keep config, rules, skills and memories in step.
 
-<br>
+codex-sync is a fork of [claude-sync](https://github.com/tawanorg/claude-sync)
+(MIT) adapted to sync `~/.codex` (or `$CODEX_HOME`) rather than claude-sync's
+own target directory. Files are gzip-compressed and age-encrypted before
+upload; storage is your own bucket (Cloudflare R2, S3, GCS, S3-compatible, or
+WebDAV).
 
-*Encrypted with [age](https://github.com/FiloSottile/age) • R2 / S3 / GCS / WebDAV supported*
+## Quick start
 
-[![Release](https://img.shields.io/github/v/release/tawanorg/claude-sync)](https://github.com/tawanorg/claude-sync/releases)
-[![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![npm](https://img.shields.io/npm/v/@tawandotorg/claude-sync)](https://www.npmjs.com/package/@tawandotorg/claude-sync)
-[![Socket Badge](https://badge.socket.dev/npm/package/@tawandotorg/claude-sync/1.11.1)](https://badge.socket.dev/npm/package/@tawandotorg/claude-sync/1.11.1)
+    make build && make install          # installs ~/.local/bin/codex-sync
+    codex-sync init                     # provider, bucket, passphrase, scope
+    codex-sync push                     # first machine
+    codex-sync init && codex-sync pull  # second machine, same passphrase
+    make install-launchd                # pull+push now, daily at 03:00 and at login
 
-[Quick Start](#quick-start) • [Setup Guide](#setup-guide) • [Commands](#commands) • [Shell Integration](#shell-integration) • [Security](#security)
+Keep both Macs on the same Codex version: an older engine cannot list threads
+written by a newer one.
 
-</div>
+## What gets synced
 
----
+| Path (under ~/.codex) | Scope | Notes |
+|---|---|---|
+| `sessions/`, `archived_sessions/` | sessions | conversations (rollout files; the source of truth) |
+| `session_index.jsonl` | sessions | thread names — merged, never overwritten |
+| `history.jsonl` | sessions | prompt history — merged, never overwritten |
+| `attachments/` | sessions | files you attached to threads |
+| `config.toml` | full | providers, MCP servers, project trust |
+| `rules/`, `skills/`, `memories/`, `AGENTS.md` | full | |
 
-## Features
+Never synced: `auth.json`, `installation_id`, every `*.sqlite`/`*.db`, `plugins/`,
+`packages/`, `cache/`, logs, worktrees and other runtime state. Codex rebuilds
+its databases from the rollout files.
 
-- **Cross-device sync**: Continue Claude Code conversations on any laptop
-- **Multi-provider storage**: Cloudflare R2, AWS S3, Google Cloud Storage, S3-compatible (Backblaze B2, MinIO, Wasabi), or WebDAV (Nextcloud, ownCloud)
-- **End-to-end encryption**: All files encrypted with age before upload
-- **Passphrase-based keys**: Same passphrase = same key on any device (no file copying)
-- **Selective sync**: Choose `--scope sessions` to sync only conversation data (skip plugins/node_modules)
-- **Interactive wizard**: Arrow-key driven setup with validation
-- **Secure self-updating**: `claude-sync update` downloads and verifies SHA256 checksums
-- **Simple CLI**: `push`, `pull`, `status`, `diff`, `conflicts` commands
-- **Compression**: Gzip compression before encryption for faster syncs
-- **Shell integration**: Optional shell hooks for automatic push/pull
+### Sync scope
 
-<div align="center">
-<img src="assets/claude-sync.gif" alt="Claude Sync Demo" width="100%">
-</div>
+`init` asks whether to sync everything or just conversation data; set it
+directly with `--scope full` or `--scope sessions`:
 
-## Quick Start
+| Scope | Syncs | Use when |
+|---|---|---|
+| `full` (default) | everything in the table above | you want config, rules, skills and memories mirrored too |
+| `sessions` | `sessions/`, `archived_sessions/`, `session_index.jsonl`, `history.jsonl`, `attachments/` only | you just want conversations to continue across machines |
 
-### First Device
+The scope is saved in `~/.codex-sync/config.yaml` and applies to every
+`push`/`pull`; it is also a ceiling on `codex-sync paths add` — a path outside
+the current scope is rejected rather than silently widening it.
 
-```bash
-# Install
-npm install -g @tawandotorg/claude-sync
+## How pull behaves
 
-# Set up (interactive wizard)
-claude-sync init
+- New and changed remote files are downloaded; a file changed on both sides is
+  kept locally and the remote copy saved as `<file>.conflict.<timestamp>`
+  (`codex-sync conflicts` resolves them). Sidecars are local only: they are
+  never uploaded, tracked or removed by a later pull.
+- `session_index.jsonl` and `history.jsonl` are unioned with your local copy.
+- A file that vanished from the remote (deleted or archived on the other Mac) is
+  moved to `~/.codex-sync/trash/<timestamp>/` when unchanged locally; changed
+  files stay. `codex-sync pull --no-delete` disables this; `--dry-run` previews it.
+  The trash grows with every removal and nothing references it, so old batches
+  are safe to delete.
+- An empty remote never removes anything.
 
-# Push your sessions
-claude-sync push
-```
+## How push behaves
 
-### Second Device
+Push uploads files whose content changed since the last sync and deletes the
+remote copies of files removed locally. A file that still has a live
+`.conflict.*` sidecar is skipped and reported as an error until you resolve it
+with `codex-sync conflicts`; the sidecar itself is never uploaded.
 
-```bash
-# Install
-npm install -g @tawandotorg/claude-sync
+## Limitations (v1)
 
-# Set up with SAME storage credentials
-claude-sync init
-# Select same provider (R2/S3/GCS/WebDAV)
-# Enter same bucket name and credentials
-# Choose "Passphrase" for encryption
-# Enter the SAME passphrase as first device
-# ✓ Encryption key verified  <-- confirms passphrase matches!
+- Thread names: pulled threads appear unnamed in the Codex app until renamed
+  there (Codex does not restore names from the synced index).
+- Do not resume the same thread on two Macs between syncs; you would get a
+  conflict sidecar instead of a merged transcript.
+- Project organization, automations and the memories database live only in
+  SQLite and are not synced.
+- macOS only; no npm package — build from source.
 
-# Preview what would be synced
-claude-sync pull --dry-run
+## Security
 
-# Pull sessions (creates backup if you have existing files)
-claude-sync pull
-```
-
-**Same passphrase = same encryption key.** The init verifies your passphrase can decrypt remote files before completing.
+Same model as claude-sync: gzip → age (X25519/ChaCha20-Poly1305); passphrase
+keys derived with Argon2id and the fixed salt `sha256("codex-sync-v1")` (so the
+same passphrase gives the same key on every device, and a different key than
+claude-sync). Config and keys are stored 0600 under `~/.codex-sync/`.
 
 ## Setup Guide
 
@@ -90,7 +105,7 @@ claude-sync pull
 <summary><b>Cloudflare R2</b> (recommended)</summary>
 
 1. Go to [Cloudflare Dashboard](https://dash.cloudflare.com/) → R2 Object Storage
-2. Click "Create bucket" → name it `claude-sync`
+2. Click "Create bucket" → name it `codex-sync`
 3. Go to "Manage R2 API Tokens" → "Create API Token"
 4. Select **Object Read & Write** permission → Create
 
@@ -125,7 +140,7 @@ Any provider exposing an S3-compatible API works through the **S3-compatible (cu
 Example (Backblaze B2):
 
 ```bash
-claude-sync init --provider s3-compatible --endpoint https://s3.us-west-004.backblazeb2.com
+codex-sync init --provider s3-compatible --endpoint https://s3.us-west-004.backblazeb2.com
 ```
 
 You'll need: Endpoint URL, Access Key ID, Secret Access Key, Bucket. The signing region is auto-detected from the endpoint (e.g. `us-west-004`); for providers that ignore it, `auto` is used.
@@ -133,7 +148,7 @@ You'll need: Endpoint URL, Access Key ID, Secret Access Key, Bucket. The signing
 For servers that don't resolve buckets as subdomains (e.g. Ceph RGW, or MinIO without wildcard DNS), add `--use-path-style` to address objects as `endpoint/bucket/key` instead of `bucket.endpoint/key`:
 
 ```bash
-claude-sync init --provider s3-compatible --endpoint https://ceph.example.com --use-path-style
+codex-sync init --provider s3-compatible --endpoint https://ceph.example.com --use-path-style
 ```
 
 It's off by default and unnecessary for Backblaze B2, Wasabi, and DigitalOcean Spaces, which all support virtual-hosted addressing.
@@ -151,215 +166,195 @@ No bucket to create — just point at your existing WebDAV server.
 
 You'll need: WebDAV URL, Username, App password
 
-The wizard will create a `claude-sync` subdirectory automatically.
+The wizard will create a `codex-sync` subdirectory automatically.
 </details>
 
 ### Step 3: Run Init
 
 ```bash
-claude-sync init
+codex-sync init
 ```
 
 The interactive wizard will guide you through:
 
-1. **Select storage provider** (R2, S3, GCS, or WebDAV)
+1. **Select storage provider** (R2, S3, GCS, S3-compatible, or WebDAV)
 2. **Enter credentials** (provider-specific)
 3. **Choose encryption method**:
    - **Passphrase** (recommended) - same passphrase on all devices = same key
-   - **Random key** - must copy `~/.claude-sync/age-key.txt` to other devices
+   - **Random key** - must copy `~/.codex-sync/age-key.txt` to other devices
 4. **Test the connection** to verify everything works
+5. **Choose a sync scope** (`full` or `sessions`, unless `--scope` was given)
 
 ### Step 4: Push and Pull
 
 ```bash
 # Upload local changes
-claude-sync push
+codex-sync push
 
 # Download remote changes
-claude-sync pull
+codex-sync pull
 ```
-
-## What Gets Synced
-
-| Path | Content |
-|------|---------|
-| `~/.claude/projects/` | Session files, auto-memory |
-| `~/.claude/plans/` | Implementation plans from plan mode |
-| `~/.claude/tasks/` | Task tracking state |
-| `~/.claude/history.jsonl` | Command history |
-| `~/.claude/agents/` | Custom agents |
-| `~/.claude/skills/` | Custom skills |
-| `~/.claude/plugins/` | Plugins |
-| `~/.claude/rules/` | Custom rules |
-| `~/.claude/settings.json` | Settings |
-| `~/.claude/settings.local.json` | Local settings |
-| `~/.claude/CLAUDE.md` | Global instructions |
-
-### Sync scope
-
-`init` asks whether to sync everything or just conversation data; you can also set it with `--scope`:
-
-| Scope | Syncs | Use when |
-|-------|-------|----------|
-| `full` (default) | everything in the table above | you want settings, skills, agents, and plugins mirrored too |
-| `sessions` | `projects/`, `history.jsonl`, `tasks/`, `plans/` only | you just want `claude --resume` to work across machines |
-
-```bash
-claude-sync init --scope sessions
-```
-
-**Why `sessions` exists:** `full` includes `plugins/`, whose plugin caches bundle `node_modules` and Python `.venv` trees — thousands of large, machine-/arch-specific files that are regenerated on demand and should not be synced. `sessions` skips them, keeping syncs small, fast, and portable. The scope is saved in `~/.claude-sync/config.yaml` and applies to every `push`/`pull`.
-
-## Cross-Device Path Mapping
-
-Claude Code indexes project sessions by **absolute filesystem path**:
-
-```
-/Users/alice/my-app → ~/.claude/projects/-Users-alice-my-app/
-/Users/bob/my-app   → ~/.claude/projects/-Users-bob-my-app/
-```
-
-Synced verbatim, those would be **different projects** and `claude --resume` on the second machine would never find the first machine's sessions. claude-sync solves this by translating paths during sync:
-
-- **Home directories are mapped automatically.** Sessions are stored remotely under a portable `${HOME}` token (in both remote keys and transcript content), then rewritten to each device's real home on pull. Different usernames across machines just work.
-- **Other layout differences are configurable.** If one machine keeps projects in `~/work` and another in `~/Projects`, point both at the same token in `~/.claude-sync/config.yaml`:
-
-  ```yaml
-  # machine 1
-  path_map:
-    ~/work: WORK
-  ```
-
-  ```yaml
-  # machine 2
-  path_map:
-    ~/Projects: WORK
-  ```
-
-  Sessions under either directory sync to the shared `${WORK}` namespace and resume correctly on both machines.
-
-**Upgrading from an older version?** Run `claude-sync migrate` once on each device to convert existing remote data to portable keys. Paths the current device doesn't own are left for the other device's migrate run.
 
 ## Commands
 
 ```bash
-claude-sync init        # Set up configuration (interactive wizard)
-claude-sync push        # Upload local changes to cloud storage
-claude-sync pull        # Download remote changes from cloud storage
-claude-sync status      # Show pending local changes
-claude-sync diff        # Show differences between local and remote
-claude-sync conflicts   # List and resolve conflicts
-claude-sync rebuild-history  # Rebuild ~/.claude/history.jsonl from session files
-claude-sync reset       # Reset configuration (forgot passphrase)
-claude-sync migrate     # Convert legacy remote keys to portable path-mapped keys
-claude-sync update      # Update to latest version (verifies release checksums)
-claude-sync changelog   # Show release history
-claude-sync --help      # Show all commands
+codex-sync init         # Set up configuration (interactive wizard)
+codex-sync push         # Upload local changes to cloud storage
+codex-sync pull         # Download remote changes from cloud storage
+codex-sync status       # Show pending local changes
+codex-sync diff         # Show differences between local and remote
+codex-sync conflicts    # List and resolve conflicts
+codex-sync paths        # Manage sync paths and exclude filters
+codex-sync reset        # Remove local config, key and sync state (keeps trash/)
+codex-sync update       # Update to latest version (verifies release checksums)
+codex-sync changelog    # Show release history
+codex-sync --help       # Show all commands
 ```
 
 ### Pull Options
 
 ```bash
-claude-sync pull                    # Normal pull (prompts if existing files)
-claude-sync pull --dry-run          # Preview what would change
-claude-sync pull --force            # Skip confirmation prompts
-claude-sync pull --rebuild-history  # Also rebuild history.jsonl after pulling
+codex-sync pull                  # Normal pull (prompts if existing files)
+codex-sync pull --dry-run        # Preview what would change
+codex-sync pull --force          # Skip confirmation prompts
+codex-sync pull --no-delete      # Never remove local files that vanished from the remote
 ```
-
-### Rebuilding Prompt History
-
-`history.jsonl` is synced as a single file, so pushes from two devices are
-last-writer-wins and one device's prompt-history entries can be lost — which
-breaks the `/resume` session picker. Session files sync cleanly (one file per
-session), so the history can always be reconstructed from them:
-
-```bash
-claude-sync rebuild-history         # One-off rebuild
-claude-sync pull --rebuild-history  # Rebuild automatically after a pull
-```
-
-Every existing entry is preserved, recovered prompts are merged in and sorted by
-timestamp, and the previous file is kept as `history.jsonl.bak`.
 
 ### Init Options
 
 ```bash
-claude-sync init              # Full setup wizard
-claude-sync init --passphrase # Re-enter passphrase only (keeps storage config)
-claude-sync init --force      # Reset everything, start fresh
+codex-sync init                   # Full setup wizard
+codex-sync init --passphrase      # Re-enter passphrase only (keeps storage config)
+codex-sync init --force           # Reset everything, start fresh
+codex-sync init --scope sessions  # Sync conversation data only
+```
+
+### Managing Sync Paths
+
+```bash
+codex-sync paths                    # List sync paths and exclude filters
+codex-sync paths add <path>         # Add a path under ~/.codex to the sync list
+codex-sync paths remove <path>      # Remove a path from the sync list
+codex-sync paths exclude <glob>     # Skip a glob pattern inside a synced directory
+codex-sync paths unexclude <glob>   # Remove a glob filter
+codex-sync paths reset              # Restore default sync paths and clear excludes
 ```
 
 ### Quiet Mode
 
 ```bash
-claude-sync push -q     # No output (for scripts)
-claude-sync pull -q
+codex-sync push -q     # No output (for scripts)
+codex-sync pull -q
 ```
+
+Errors are still printed to stderr in quiet mode, and a push or pull with any
+failed file exits non-zero, so `pull -q && push -q` stops at the first problem.
+
+### Reset
+
+```bash
+codex-sync reset            # Remove ~/.codex-sync/config.yaml, age-key.txt and state.json
+codex-sync reset --remote   # Also delete every file in the bucket
+codex-sync reset --local    # Kept for compatibility: a plain reset already clears the sync state
+```
+
+`reset` never touches `~/.codex` and never touches `~/.codex-sync/trash/`, so
+files an earlier pull removed stay recoverable. Run `codex-sync init` afterwards
+to set up again.
 
 ### Check for Updates
 
 ```bash
-claude-sync update --check   # Check without installing
-claude-sync update           # Download and install latest version
+codex-sync update --check   # Check without installing
+codex-sync update           # Download and install latest version
 ```
+
+There are no published releases yet; both commands print a build-from-source
+hint (`git pull && make build && make install`) until the first one exists.
 
 ### Changelog
 
 ```bash
-claude-sync changelog            # Show recent releases
-claude-sync changelog --limit 5  # Show last 5 releases
+codex-sync changelog            # Show recent releases
+codex-sync changelog --limit 5  # Show last 5 releases
 ```
+
+## Automatic Sync (launchd)
+
+```bash
+make install-launchd     # installs the binary, then the daily agent
+make uninstall-launchd   # removes it
+```
+
+This installs a per-user launchd agent
+(`~/Library/LaunchAgents/com.codex-sync.daily.plist`) that runs
+`codex-sync pull -q && codex-sync push -q`. The job runs immediately when
+installed (`RunAtLoad`), then daily at 03:00 and at every login. Output goes to
+`~/Library/Logs/codex-sync.log`; a failed file makes the job exit non-zero, and
+the log says which file and why.
+
+launchd jobs do not see your shell environment. If you use a custom Codex home,
+run `CODEX_HOME=/path/to/home make install-launchd` — the value is baked into
+the agent at install time (re-run the target to change it). macOS only; there
+is no built-in scheduler in the CLI itself.
 
 ## Exclude Patterns
 
-Skip specific files or directories during sync by adding exclude patterns to your config (`~/.claude-sync/config.yaml`):
+Skip specific files or directories during sync by adding exclude patterns to your config (`~/.codex-sync/config.yaml`):
 
 ```yaml
 exclude:
   - "*.tmp"
-  - "projects/*/node_modules/*"
-  - "projects/*/.git/*"
+  - "attachments/**"
+  - "skills/**/node_modules/**"
 ```
 
-Patterns use glob syntax and are matched against paths relative to `~/.claude`.
+Patterns use glob syntax and are matched against paths relative to `~/.codex`.
 
-## Shell Integration
+## Acceptance check
 
-Add to `~/.zshrc` or `~/.bashrc`:
+`integration/codex_listing_check.py` compares the user-visible threads reported
+by a real Codex engine binary (the `app-server` protocol) across two
+`$CODEX_HOME` directories — a source home and a synced copy — across every
+model provider configured in the source home. It needs a local Codex engine
+binary, is run manually, and is not part of `make check`.
+
+Run it against copies (or APFS clones) of the homes, never the live `~/.codex`:
+the engine writes state into whichever home it is given.
 
 ```bash
-# Auto-pull on shell start
-if command -v claude-sync &> /dev/null; then
-  # Run in a subshell so the job is detached from the parent shell's
-  # job table — avoids interactive `[1] 12345` / `[1] + done` noise.
-  (claude-sync pull -q &) >/dev/null 2>&1
-fi
-
-# Auto-push on shell exit
-trap 'claude-sync push -q' EXIT
+integration/codex_listing_check.py --source /path/to/copy-of-home \
+    --synced /path/to/copy-of-other-home \
+    [--codex-bin /Applications/ChatGPT.app/Contents/Resources/codex]
 ```
 
-> **Note:** The subshell wrapper `(cmd &)` prevents zsh/bash from printing job control
-> messages (`[1] 12345` on start and `[1] + done cmd` on completion) every time you open
-> a terminal. A plain `claude-sync pull -q &` works but produces noisy shell prompts.
+It exits 2 with `codex engine binary not found` when the engine cannot be
+started (set `--codex-bin` or `CODEX_BIN`).
 
-## Pulling with Existing Files
+## Passphrase Issues
 
-When you pull on a device that already has `~/.claude` files, claude-sync will:
+### Wrong passphrase on a new device
 
-1. **Show what would change** - files that would be overwritten, kept, or downloaded
-2. **Ask for confirmation** - choose to backup, overwrite, or abort
-3. **Create a backup** - saves existing files to `~/.claude.backup.{timestamp}`
+If you entered the wrong passphrase on a new device:
 
 ```bash
-# Preview first
-claude-sync pull --dry-run
+# Re-enter passphrase (keeps your storage config)
+codex-sync init --passphrase
+```
 
-# Pull with prompts
-claude-sync pull
+The init will verify your passphrase can decrypt remote files before completing.
 
-# Skip prompts (for scripts)
-claude-sync pull --force
+### Forgot your passphrase
+
+The passphrase is **never stored**. If you forget it:
+
+1. Your encrypted files cannot be recovered
+2. Reset and start fresh:
+
+```bash
+codex-sync reset --remote   # Delete remote files and local config/key/state (trash/ kept)
+codex-sync init             # Set up again with new passphrase
+codex-sync push             # Re-upload from this device
 ```
 
 ## Conflict Resolution
@@ -367,10 +362,10 @@ claude-sync pull --force
 When both local and remote files change, the remote version is saved as `.conflict`:
 
 ```bash
-claude-sync conflicts            # Interactive resolution
-claude-sync conflicts --list     # Just list conflicts
-claude-sync conflicts --keep local   # Keep all local versions
-claude-sync conflicts --keep remote  # Keep all remote versions
+codex-sync conflicts            # Interactive resolution
+codex-sync conflicts --list     # Just list conflicts
+codex-sync conflicts --keep local   # Keep all local versions
+codex-sync conflicts --keep remote  # Keep all remote versions
 ```
 
 Interactive options:
@@ -380,43 +375,34 @@ Interactive options:
 - **[s]** Skip
 - **[q]** Quit
 
-## Wrong Passphrase?
+`session_index.jsonl` and `history.jsonl` never produce conflicts — they are
+merged instead (see "How pull behaves").
 
-If you entered the wrong passphrase on a new device:
+## Pulling with Existing Files
 
-```bash
-# Re-enter passphrase (keeps your storage config)
-claude-sync init --passphrase
-```
+When you pull on a device that already has `~/.codex` files, codex-sync will:
 
-The init will verify your passphrase can decrypt remote files before completing.
-
-## Forgot Passphrase?
-
-The passphrase is **never stored**. If you forget it:
-
-1. Your encrypted files cannot be recovered
-2. Reset and start fresh:
+1. **Show what would change** - files that would be overwritten, kept, merged, or downloaded
+2. **Ask for confirmation** - choose to back up, overwrite, or abort
+3. **Create a backup** - saves existing files to `~/.codex.backup.<timestamp>`
 
 ```bash
-claude-sync reset --remote   # Delete remote files and local config
-claude-sync init             # Set up again with new passphrase
-claude-sync push             # Re-upload from this device
+# Preview first
+codex-sync pull --dry-run
+
+# Pull with prompts
+codex-sync pull
+
+# Skip prompts (for scripts)
+codex-sync pull --force
 ```
-
-## Security
-
-- Files compressed with gzip, then encrypted with [age](https://github.com/FiloSottile/age) before upload
-- Passphrase-derived keys use Argon2 (memory-hard KDF)
-- Passphrase is never stored - only the derived key at `~/.claude-sync/age-key.txt`
-- Cloud storage is private (API key/IAM auth)
-- Config files and downloads stored with 0600/0700 permissions (user-only)
-- Self-update verifies SHA256 checksums before installing new binaries
-- Backward compatible: can read both compressed and uncompressed remote files
 
 ## Cost
 
-Claude sessions typically use < 50MB. Syncing is effectively **free** on any provider:
+Storage cost depends on how much conversation history you keep — `sessions/`
+and `archived_sessions/` scale with usage and can range from a few MB to
+several hundred MB on a long-lived install. Even so, it's inexpensive on any
+provider:
 
 | Provider | Free Tier |
 |----------|-----------|
@@ -425,74 +411,28 @@ Claude sessions typically use < 50MB. Syncing is effectively **free** on any pro
 | **Google Cloud Storage** | 5GB, 5K writes, 50K reads/month |
 | **WebDAV** | Self-hosted — no limits, no cost beyond your own server |
 
-## Installation Options
+## Build from Source
 
-### npm (recommended)
-
-**Prerequisite:** Node.js 14+ (no Go required - downloads pre-compiled binary)
+**Prerequisite:** Go 1.24+
 
 ```bash
-# Global install
-npm install -g @tawandotorg/claude-sync
-
-# Or one-time use
-npx @tawandotorg/claude-sync init
-```
-
-### GitHub Packages
-
-**Prerequisite:** Node.js 14+
-
-```bash
-# Add to ~/.npmrc
-echo "@tawanorg:registry=https://npm.pkg.github.com" >> ~/.npmrc
-
-# Install
-npm install -g @tawanorg/claude-sync
-```
-
-### Download Binary
-
-**Prerequisite:** None
-
-```bash
-# macOS ARM (M1/M2/M3)
-curl -L https://github.com/tawanorg/claude-sync/releases/latest/download/claude-sync-darwin-arm64 -o claude-sync
-chmod +x claude-sync
-sudo mv claude-sync /usr/local/bin/
-```
-
-See [GitHub Releases](https://github.com/tawanorg/claude-sync/releases) for all platforms.
-
-### Go Install
-
-**Prerequisite:** Go 1.21+ (for developers)
-
-```bash
-go install github.com/tawanorg/claude-sync/cmd/claude-sync@latest
-```
-
-### Build from Source
-
-**Prerequisite:** Go 1.21+
-
-```bash
-git clone https://github.com/tawanorg/claude-sync
-cd claude-sync
-make build
-./bin/claude-sync --version
+git clone https://github.com/d-jiao/codex-sync
+cd codex-sync
+make build && make install   # installs ~/.local/bin/codex-sync
+codex-sync --version
 ```
 
 ## Development
 
 ```bash
 make test          # Run tests
-make fmt           # Format code
-make check         # Run all pre-commit checks
-make build-all     # Build for all platforms
-make setup-hooks   # Enable git pre-commit hooks
+make fmt            # Format code
+make check           # Run all pre-commit checks
+make setup-hooks      # Enable git pre-commit hooks
 ```
 
 ## License
 
-MIT
+MIT — see [LICENSE](LICENSE). codex-sync is a fork of
+[claude-sync](https://github.com/tawanorg/claude-sync); see [NOTICE](NOTICE)
+for the fork point and attribution.

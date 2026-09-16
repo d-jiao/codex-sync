@@ -25,6 +25,9 @@ bin/codex-sync-*
 vendor/
 node_modules/
 
+# Python
+__pycache__/
+
 # IDE
 .idea/
 .vscode/
@@ -44,3 +47,6 @@ Thumbs.db
 
 # Claude Code worktrees
 .claude/worktrees/
+
+# superpowers SDD workspace (ledger, briefs, review packages)
+.superpowers/

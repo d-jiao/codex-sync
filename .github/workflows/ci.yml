@@ -26,7 +26,6 @@ jobs:
       - name: Run coverage on library packages
         run: |
           go test -coverprofile=coverage.out -covermode=atomic \
-            ./internal/claudesettings/ \
             ./internal/config/ \
             ./internal/crypto/ \
             ./internal/paths/ \

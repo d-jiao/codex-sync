@@ -38,7 +38,7 @@ func TestValidatePath(t *testing.T) {
 }
 
 // TestAddRejectsTraversal ensures the CLI cannot persist a sync path that would
-// read outside ~/.claude on push or write outside it on pull.
+// read outside ~/.codex on push or write outside it on pull.
 func TestAddRejectsTraversal(t *testing.T) {
 	m := NewManager(nil, nil, "/tmp/test", config.ScopeFull)
 	before := len(m.SyncPaths())
@@ -69,8 +69,8 @@ func TestAddRejectsOutOfScopePathUnderSessions(t *testing.T) {
 	}
 
 	// An in-scope path is still addable.
-	if got := m.Add("projects"); got.OutOfScope {
-		t.Error("projects is within sessions scope and should be addable")
+	if got := m.Add("sessions"); got.OutOfScope {
+		t.Error("sessions is within sessions scope and should be addable")
 	}
 }
 

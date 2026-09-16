@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -52,14 +53,19 @@ type Syncer struct {
 	onProgress ProgressFunc
 	cfg        *config.Config
 	paths      *PathMapper
+	noDelete   bool   // pull --no-delete: never remove local files that vanished remotely
+	trashDir   string // where removed files are moved (config.TrashDirPath by default)
 }
 
 type SyncResult struct {
 	Uploaded   []string
 	Downloaded []string
+	Merged     []string
 	Deleted    []string
 	Conflicts  []string
 	Errors     []error
+	Removed    []string // moved to the trash directory: vanished remotely, unchanged locally
+	KeptLocal  []string // vanished remotely but modified locally: left in place
 }
 
 type ProgressEvent struct {
@@ -97,10 +103,10 @@ func NewSyncer(cfg *config.Config, quiet bool) (*Syncer, error) {
 		return nil, fmt.Errorf("failed to load state: %w", err)
 	}
 
-	// Use overridden claude dir if provided, otherwise use default
-	claudeDir := config.ClaudeDir()
-	if cfg.ClaudeDirOverride != "" {
-		claudeDir = cfg.ClaudeDirOverride
+	// Use overridden base dir if provided, otherwise use default
+	claudeDir := config.BaseDir()
+	if cfg.BaseDirOverride != "" {
+		claudeDir = cfg.BaseDirOverride
 	}
 
 	homeDir, _ := os.UserHomeDir()
@@ -117,6 +123,7 @@ func NewSyncer(cfg *config.Config, quiet bool) (*Syncer, error) {
 		quiet:     quiet,
 		cfg:       cfg,
 		paths:     mapper,
+		trashDir:  config.TrashDirPath(),
 	}, nil
 }
 
@@ -132,12 +139,19 @@ func NewSyncerWith(cfg *config.Config, store storage.Storage, enc *crypto.Encryp
 		quiet:     quiet,
 		cfg:       cfg,
 		paths:     mapper,
+		trashDir:  config.TrashDirPath(),
 	}
 }
 
 func (s *Syncer) SetProgressFunc(fn ProgressFunc) {
 	s.onProgress = fn
 }
+
+// SetNoDelete disables pull-side removal of files that vanished from the remote.
+func (s *Syncer) SetNoDelete(v bool) { s.noDelete = v }
+
+// SetTrashDir overrides where removed files are moved (for testing).
+func (s *Syncer) SetTrashDir(dir string) { s.trashDir = dir }
 
 func (s *Syncer) progress(event ProgressEvent) {
 	if s.onProgress != nil {
@@ -149,7 +163,7 @@ func (s *Syncer) isExcluded(relPath string) bool {
 	return s.cfg.IsExcluded(relPath)
 }
 
-// syncPaths returns the set of ~/.claude paths to sync, honoring both the
+// syncPaths returns the set of Codex home paths to sync, honoring both the
 // configured scope ("full" by default, or "sessions" for portable data only)
 // and any sync_paths override, with scope acting as a ceiling.
 func (s *Syncer) syncPaths() []string {
@@ -161,7 +175,7 @@ func (s *Syncer) Scope() string {
 	return s.cfg.Scope
 }
 
-// SyncPaths returns the effective ~/.claude paths this syncer operates on, so
+// SyncPaths returns the effective Codex home paths this syncer operates on, so
 // callers such as the pre-pull backup cover exactly the set that pull can
 // overwrite rather than recomputing it from scope alone.
 func (s *Syncer) SyncPaths() []string {
@@ -189,18 +203,25 @@ func (s *Syncer) Push(ctx context.Context) (*SyncResult, error) {
 		return result, nil
 	}
 
-	// Separate uploads from deletes
+	// Separate uploads from deletes. A file with a live conflict sidecar is
+	// not published until the user resolves it (spec §7): pushing it would
+	// silently overwrite the remote version the sidecar holds.
 	var uploads, deletes []FileChange
 	for _, change := range changes {
 		switch change.Action {
 		case "add", "modify":
+			if s.hasConflictSidecar(change.Path) {
+				result.Errors = append(result.Errors,
+					fmt.Errorf("unresolved conflict for %s; run 'codex-sync conflicts'", change.Path))
+				continue
+			}
 			uploads = append(uploads, change)
 		case "delete":
 			deletes = append(deletes, change)
 		}
 	}
 
-	total := len(changes)
+	total := len(uploads) + len(deletes)
 	var mu sync.Mutex
 	var completed atomic.Int32
 
@@ -322,6 +343,16 @@ func (s *Syncer) Pull(ctx context.Context) (*SyncResult, error) {
 		localInfo, localExists := localFiles[localPath]
 		stateFile := s.state.GetFile(localPath)
 
+		if IsMergeablePath(localPath) {
+			merged, err := s.mergeRemote(ctx, localPath, remoteObj, localExists, stateFile)
+			if err != nil {
+				result.Errors = append(result.Errors, fmt.Errorf("%s: %w", localPath, err))
+			} else if merged {
+				result.Merged = append(result.Merged, localPath)
+			}
+			continue
+		}
+
 		shouldDownload := false
 
 		if !localExists {
@@ -408,6 +439,27 @@ func (s *Syncer) Pull(ctx context.Context) (*SyncResult, error) {
 
 	s.progress(ProgressEvent{Action: "download", Complete: true, Total: total})
 
+	// Files that vanished from the remote (deleted or moved on another machine)
+	// are moved to the trash when unchanged locally; never when this pull saw an
+	// empty remote (Pull returned early above).
+	if !s.noDelete {
+		removable, kept, err := s.staleLocalFiles(remoteFiles, localFiles)
+		if err != nil {
+			result.Errors = append(result.Errors, err)
+		} else {
+			batch := time.Now().Format("20060102-150405")
+			for _, relPath := range removable {
+				if err := s.moveToTrash(relPath, batch); err != nil {
+					result.Errors = append(result.Errors, fmt.Errorf("%s: %w", relPath, err))
+					continue
+				}
+				s.state.RemoveFile(relPath)
+				result.Removed = append(result.Removed, relPath)
+			}
+			result.KeptLocal = kept
+		}
+	}
+
 	s.state.LastPull = time.Now()
 	s.state.LastSync = time.Now()
 	if err := s.state.Save(); err != nil {
@@ -462,38 +514,51 @@ func (s *Syncer) uploadFile(ctx context.Context, relativePath string) error {
 	return nil
 }
 
-// downloadFile downloads and decrypts a file from remote storage.
-// If originalMtime is non-nil, the file's modification time will be restored to that value.
-func (s *Syncer) downloadFile(ctx context.Context, relativePath, remoteKey string, originalMtime *time.Time) error {
-	// Download
+// fetchRemote downloads, decrypts, decompresses and de-tokenizes one remote object.
+func (s *Syncer) fetchRemote(ctx context.Context, relativePath, remoteKey string) ([]byte, error) {
 	encrypted, err := s.storage.Download(ctx, remoteKey)
 	if err != nil {
-		return fmt.Errorf("failed to download: %w", err)
+		return nil, fmt.Errorf("failed to download: %w", err)
 	}
-
-	// Decrypt
 	data, err := s.encryptor.Decrypt(encrypted)
 	if err != nil {
-		return fmt.Errorf("failed to decrypt: %w", err)
+		return nil, fmt.Errorf("failed to decrypt: %w", err)
 	}
-
-	// Decompress if gzipped (backward-compatible with uncompressed data)
+	// Backward-compatible: older remote blobs may be uncompressed
 	if isGzipped(data) {
-		data, err = gzipDecompress(data)
-		if err != nil {
-			return fmt.Errorf("failed to decompress: %w", err)
+		if data, err = gzipDecompress(data); err != nil {
+			return nil, fmt.Errorf("failed to decompress: %w", err)
 		}
 	}
-
-	// Replace portable tokens with this device's paths in session content
 	if IsPortableContentPath(relativePath) {
 		data = s.paths.ResolveContent(data)
 	}
+	return data, nil
+}
 
-	// Guard against path traversal from crafted remote keys
+// localFilePath resolves a relative path under the base dir, refusing anything
+// that would escape it (crafted remote keys).
+func (s *Syncer) localFilePath(relativePath string) (string, error) {
 	fullPath := filepath.Join(s.claudeDir, relativePath)
 	if !strings.HasPrefix(filepath.Clean(fullPath), filepath.Clean(s.claudeDir)+string(filepath.Separator)) {
-		return fmt.Errorf("refusing to write outside %s: %s", s.claudeDir, relativePath)
+		return "", fmt.Errorf("refusing to write outside %s: %s", s.claudeDir, relativePath)
+	}
+	return fullPath, nil
+}
+
+// downloadFile downloads and decrypts a file from remote storage.
+// If originalMtime is non-nil, the file's modification time will be restored to that value.
+func (s *Syncer) downloadFile(ctx context.Context, relativePath, remoteKey string, originalMtime *time.Time) error {
+	if config.IsProtected(relativePath) {
+		return fmt.Errorf("refusing to write protected file %s", relativePath)
+	}
+	data, err := s.fetchRemote(ctx, relativePath, remoteKey)
+	if err != nil {
+		return err
+	}
+	fullPath, err := s.localFilePath(relativePath)
+	if err != nil {
+		return err
 	}
 
 	// Ensure directory exists
@@ -524,16 +589,145 @@ func (s *Syncer) downloadFile(ctx context.Context, relativePath, remoteKey strin
 	return nil
 }
 
+// handleConflict keeps the local file and writes the remote copy next to it
+// as `<path>.conflict.<timestamp>`. The sidecar is a local artifact for
+// `codex-sync conflicts`: it is hard-excluded from every scan (config.HardExcludes)
+// and dropped from state here, so it is never uploaded, tracked or trashed.
 func (s *Syncer) handleConflict(ctx context.Context, relativePath string, remoteObj storage.ObjectInfo) error {
 	s.log("Conflict detected: %s (keeping local, saving remote as .conflict)", relativePath)
 
-	// Download remote version with conflict suffix
+	// downloadFile de-tokenizes content (IsPortableContentPath honors the
+	// .conflict. suffix) but also records the sidecar in state; undo that.
 	conflictPath := relativePath + ".conflict." + time.Now().Format("20060102-150405")
+	defer s.state.RemoveFile(conflictPath)
 	if err := s.downloadFile(ctx, conflictPath, remoteObj.Key, nil); err != nil {
 		return fmt.Errorf("failed to save conflict file: %w", err)
 	}
 
 	return nil
+}
+
+// isConflictSidecar reports whether relPath is a `<path>.conflict.<timestamp>`
+// sidecar written by handleConflict.
+func isConflictSidecar(relPath string) bool {
+	return strings.Contains(relPath, ".conflict.")
+}
+
+// hasConflictSidecar reports whether a `<relPath>.conflict.*` file sits next
+// to relPath. It lists the directory rather than globbing so names containing
+// glob metacharacters are matched literally.
+func (s *Syncer) hasConflictSidecar(relPath string) bool {
+	fullPath := filepath.Join(s.claudeDir, filepath.FromSlash(relPath))
+	entries, err := os.ReadDir(filepath.Dir(fullPath))
+	if err != nil {
+		return false
+	}
+	prefix := filepath.Base(fullPath) + ".conflict."
+	for _, e := range entries {
+		if !e.IsDir() && strings.HasPrefix(e.Name(), prefix) {
+			return true
+		}
+	}
+	return false
+}
+
+// staleLocalFiles lists tracked files that are present locally but gone from
+// the remote: removable when unchanged since the last sync, kept when modified
+// locally. Mergeable and protected paths are never candidates, nor are conflict
+// sidecars (handleConflict never tracks them; the skip covers state written by
+// older builds that did).
+func (s *Syncer) staleLocalFiles(remoteFiles map[string]storage.ObjectInfo, localFiles map[string]os.FileInfo) (removable, kept []string, err error) {
+	s.state.mu.Lock()
+	tracked := make([]string, 0, len(s.state.Files))
+	for p := range s.state.Files {
+		tracked = append(tracked, p)
+	}
+	s.state.mu.Unlock()
+	sort.Strings(tracked)
+
+	for _, relPath := range tracked {
+		if _, onRemote := remoteFiles[relPath]; onRemote {
+			continue
+		}
+		if _, onDisk := localFiles[relPath]; !onDisk {
+			continue
+		}
+		if IsMergeablePath(relPath) || config.IsProtected(relPath) || isConflictSidecar(relPath) {
+			continue
+		}
+		hash, err := HashFile(filepath.Join(s.claudeDir, relPath))
+		if err != nil {
+			return nil, nil, fmt.Errorf("failed to hash %s: %w", relPath, err)
+		}
+		if hash == s.state.GetFile(relPath).Hash {
+			removable = append(removable, relPath)
+		} else {
+			kept = append(kept, relPath)
+		}
+	}
+	return removable, kept, nil
+}
+
+// moveToTrash relocates a local file to <trashDir>/<batch>/<relPath>. A rename
+// that fails (different volume) falls back to copy-then-remove.
+func (s *Syncer) moveToTrash(relPath, batch string) error {
+	if s.trashDir == "" {
+		return fmt.Errorf("trash directory not configured; refusing to remove %s", relPath)
+	}
+	src := filepath.Join(s.claudeDir, relPath)
+	dst := filepath.Join(s.trashDir, batch, filepath.FromSlash(relPath))
+	if err := os.MkdirAll(filepath.Dir(dst), 0700); err != nil {
+		return fmt.Errorf("failed to create trash directory: %w", err)
+	}
+	if err := os.Rename(src, dst); err == nil {
+		return nil
+	}
+	data, err := os.ReadFile(src)
+	if err != nil {
+		return err
+	}
+	if err := os.WriteFile(dst, data, 0600); err != nil {
+		return err
+	}
+	return os.Remove(src)
+}
+
+// mergeRemote handles a mergeable file (see IsMergeablePath): the remote copy is
+// unioned into the local one whenever the remote changed since the last sync,
+// or was never synced here. State records the remote hash, so the next push
+// uploads the union exactly when the local copy contributed something.
+func (s *Syncer) mergeRemote(ctx context.Context, relativePath string, remoteObj storage.ObjectInfo, localExists bool, stateFile *FileState) (bool, error) {
+	if stateFile != nil && localExists && !remoteObj.LastModified.After(stateFile.Uploaded) {
+		return false, nil // remote unchanged since we last merged it
+	}
+	remoteData, err := s.fetchRemote(ctx, relativePath, remoteObj.Key)
+	if err != nil {
+		return false, err
+	}
+	fullPath, err := s.localFilePath(relativePath)
+	if err != nil {
+		return false, err
+	}
+	var localData []byte
+	if localExists {
+		if localData, err = os.ReadFile(fullPath); err != nil {
+			return false, fmt.Errorf("failed to read local file: %w", err)
+		}
+	}
+	merged, err := MergeJSONL(relativePath, localData, remoteData)
+	if err != nil {
+		return false, err
+	}
+	if err := writeFileAtomic(fullPath, merged, 0600); err != nil {
+		return false, fmt.Errorf("failed to write merged file: %w", err)
+	}
+	info, err := os.Stat(fullPath)
+	if err != nil {
+		return false, err
+	}
+	s.state.UpdateFile(relativePath, info, hashBytes(remoteData))
+	s.state.MarkUploaded(relativePath)
+	return true, nil
 }
 
 // uploadManifest builds and uploads a manifest containing file mtimes from current state.
@@ -640,7 +834,7 @@ func (s *Syncer) buildRemoteMap(remoteObjects []storage.ObjectInfo) (remoteFiles
 			skipped = append(skipped, obj.Key)
 			continue
 		}
-		// Skip external files (handled by MCP sync)
+		// Skip legacy external objects (claude-sync MCP sync); never mapped to local files
 		if strings.HasPrefix(localPath, "_external/") {
 			continue
 		}
@@ -689,7 +883,10 @@ type PullPreview struct {
 	WouldOverwrite []FilePreview // Existing local files that would be replaced
 	WouldKeep      []FilePreview // Local files that would be kept (local newer)
 	WouldConflict  []FilePreview // Files that would create a conflict
+	WouldMerge     []FilePreview // Shared index files that would be unioned with the local copy
 	LocalOnlyFiles []FilePreview // Files that exist only locally
+	WouldRemove    []FilePreview // Tracked files gone from the remote, unchanged locally: would move to trash
+	WouldKeepLocal []FilePreview // Tracked files gone from the remote but modified locally: would stay in place
 }
 
 // PreviewPull returns a preview of what would happen during a pull operation
@@ -726,6 +923,13 @@ func (s *Syncer) PreviewPull(ctx context.Context) (*PullPreview, error) {
 		if localExists {
 			fp.LocalTime = localInfo.ModTime()
 			fp.LocalSize = localInfo.Size()
+		}
+
+		if IsMergeablePath(localPath) {
+			if stateFile == nil || !localExists || remoteObj.LastModified.After(stateFile.Uploaded) {
+				preview.WouldMerge = append(preview.WouldMerge, fp)
+			}
+			continue
 		}
 
 		if !localExists {
@@ -767,6 +971,19 @@ func (s *Syncer) PreviewPull(ctx context.Context) (*PullPreview, error) {
 				LocalSize: localInfo.Size(),
 				LocalOnly: true,
 			})
+		}
+	}
+
+	if len(remoteObjects) > 0 && !s.noDelete {
+		removable, kept, err := s.staleLocalFiles(remoteFiles, localFiles)
+		if err != nil {
+			return nil, err
+		}
+		for _, p := range removable {
+			preview.WouldRemove = append(preview.WouldRemove, FilePreview{Path: p, LocalSize: localFiles[p].Size()})
+		}
+		for _, p := range kept {
+			preview.WouldKeepLocal = append(preview.WouldKeepLocal, FilePreview{Path: p, LocalSize: localFiles[p].Size()})
 		}
 	}
 
@@ -858,228 +1075,6 @@ func (s *Syncer) Diff(ctx context.Context) ([]DiffEntry, error) {
 	}
 
 	return entries, nil
-}
-
-// claudeJSONPath returns the path to ~/.claude.json, respecting test overrides.
-func (s *Syncer) claudeJSONPath() string {
-	if s.cfg.ClaudeJSONOverride != "" {
-		return s.cfg.ClaudeJSONOverride
-	}
-	return config.ClaudeJSONPath()
-}
-
-// PushMCP reads local MCP server configs, normalizes paths, and uploads them.
-func (s *Syncer) PushMCP(ctx context.Context) (*MCPPushResult, error) {
-	result := &MCPPushResult{}
-
-	claudeJSON := s.claudeJSONPath()
-	servers, err := ReadMCPServers(claudeJSON)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read MCP servers: %w", err)
-	}
-	if len(servers) == 0 {
-		result.Unchanged = true
-		return result, nil
-	}
-
-	homeDir, _ := os.UserHomeDir()
-	normalized, err := NormalizeMCPServers(servers, homeDir)
-	if err != nil {
-		return nil, fmt.Errorf("failed to normalize MCP paths: %w", err)
-	}
-
-	// Check if anything changed vs last push
-	newHash, err := HashMCPServers(normalized)
-	if err != nil {
-		return nil, fmt.Errorf("failed to hash MCP servers: %w", err)
-	}
-
-	stateFile := s.state.GetFile(config.MCPRemoteKey)
-	if stateFile != nil && stateFile.Hash == newHash {
-		result.Unchanged = true
-		return result, nil
-	}
-
-	// Serialize, compress, encrypt, upload
-	data, err := json.Marshal(normalized)
-	if err != nil {
-		return nil, fmt.Errorf("failed to serialize MCP servers: %w", err)
-	}
-
-	compressed, err := gzipCompress(data)
-	if err != nil {
-		return nil, fmt.Errorf("failed to compress: %w", err)
-	}
-
-	encrypted, err := s.encryptor.Encrypt(compressed)
-	if err != nil {
-		return nil, fmt.Errorf("failed to encrypt: %w", err)
-	}
-
-	remoteKey := config.MCPRemoteKey + ".age"
-	if err := s.storage.Upload(ctx, remoteKey, encrypted); err != nil {
-		return nil, fmt.Errorf("failed to upload MCP servers: %w", err)
-	}
-
-	// Update state
-	s.state.mu.Lock()
-	s.state.Files[config.MCPRemoteKey] = &FileState{
-		Path:     config.MCPRemoteKey,
-		Hash:     newHash,
-		Size:     int64(len(data)),
-		ModTime:  time.Now(),
-		Uploaded: time.Now(),
-	}
-	s.state.mu.Unlock()
-
-	if err := s.state.SetMCPBaseline(normalized); err != nil {
-		return nil, fmt.Errorf("failed to save MCP baseline: %w", err)
-	}
-
-	if err := s.state.Save(); err != nil {
-		return nil, fmt.Errorf("failed to save state: %w", err)
-	}
-
-	result.ServersPushed = len(normalized)
-	return result, nil
-}
-
-// PullMCP downloads remote MCP server configs and merges them with local configs.
-func (s *Syncer) PullMCP(ctx context.Context) (*MCPPullResult, error) {
-	result := &MCPPullResult{}
-
-	// Download remote MCP data
-	remoteKey := config.MCPRemoteKey + ".age"
-	encrypted, err := s.storage.Download(ctx, remoteKey)
-	if err != nil {
-		// If the key doesn't exist, no remote MCP data
-		result.NoRemote = true
-		return result, nil
-	}
-
-	decrypted, err := s.encryptor.Decrypt(encrypted)
-	if err != nil {
-		return nil, fmt.Errorf("failed to decrypt MCP data: %w", err)
-	}
-
-	if isGzipped(decrypted) {
-		decrypted, err = gzipDecompress(decrypted)
-		if err != nil {
-			return nil, fmt.Errorf("failed to decompress MCP data: %w", err)
-		}
-	}
-
-	var remoteServers MCPServers
-	if err := json.Unmarshal(decrypted, &remoteServers); err != nil {
-		return nil, fmt.Errorf("failed to parse remote MCP servers: %w", err)
-	}
-
-	// Read local servers
-	claudeJSON := s.claudeJSONPath()
-	localServers, err := ReadMCPServers(claudeJSON)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read local MCP servers: %w", err)
-	}
-	if localServers == nil {
-		localServers = make(MCPServers)
-	}
-
-	// Normalize local for comparison
-	homeDir, _ := os.UserHomeDir()
-	localNormalized, err := NormalizeMCPServers(localServers, homeDir)
-	if err != nil {
-		return nil, fmt.Errorf("failed to normalize local MCP paths: %w", err)
-	}
-
-	// Load baseline
-	baseline, err := s.state.GetMCPBaseline()
-	if err != nil {
-		return nil, fmt.Errorf("failed to load MCP baseline: %w", err)
-	}
-	if baseline == nil {
-		baseline = make(MCPServers)
-	}
-
-	// Three-way merge
-	mergeResult := MergeMCPServers(localNormalized, remoteServers, baseline)
-
-	// Resolve paths in merged result
-	resolved, err := ResolveMCPServers(mergeResult.Merged, homeDir)
-	if err != nil {
-		return nil, fmt.Errorf("failed to resolve MCP paths: %w", err)
-	}
-
-	// Write merged result back to claude.json
-	if err := WriteMCPServers(claudeJSON, resolved); err != nil {
-		return nil, fmt.Errorf("failed to write MCP servers: %w", err)
-	}
-
-	// Update baseline to the merged normalized state
-	if err := s.state.SetMCPBaseline(mergeResult.Merged); err != nil {
-		return nil, fmt.Errorf("failed to save MCP baseline: %w", err)
-	}
-
-	// Update file state
-	newHash, _ := HashMCPServers(mergeResult.Merged)
-	s.state.mu.Lock()
-	s.state.Files[config.MCPRemoteKey] = &FileState{
-		Path:     config.MCPRemoteKey,
-		Hash:     newHash,
-		Size:     int64(len(decrypted)),
-		ModTime:  time.Now(),
-		Uploaded: time.Now(),
-	}
-	s.state.mu.Unlock()
-
-	if err := s.state.Save(); err != nil {
-		return nil, fmt.Errorf("failed to save state: %w", err)
-	}
-
-	result.Added = mergeResult.Added
-	result.Updated = mergeResult.Updated
-	result.Kept = mergeResult.Kept
-	result.Conflicts = mergeResult.Conflicts
-	return result, nil
-}
-
-// MCPStatus returns the current state of local MCP servers compared to the last sync.
-type MCPStatusResult struct {
-	Servers     MCPServers
-	HasChanges  bool
-	ServerCount int
-}
-
-func (s *Syncer) MCPStatus(ctx context.Context) (*MCPStatusResult, error) {
-	claudeJSON := s.claudeJSONPath()
-	servers, err := ReadMCPServers(claudeJSON)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read MCP servers: %w", err)
-	}
-
-	result := &MCPStatusResult{
-		Servers:     servers,
-		ServerCount: len(servers),
-	}
-
-	if servers == nil {
-		return result, nil
-	}
-
-	homeDir, _ := os.UserHomeDir()
-	normalized, err := NormalizeMCPServers(servers, homeDir)
-	if err != nil {
-		return nil, err
-	}
-
-	newHash, err := HashMCPServers(normalized)
-	if err != nil {
-		return nil, err
-	}
-
-	stateFile := s.state.GetFile(config.MCPRemoteKey)
-	result.HasChanges = stateFile == nil || stateFile.Hash != newHash
-
-	return result, nil
 }
 
 // isGzipped checks if data starts with the gzip magic number (0x1f 0x8b).

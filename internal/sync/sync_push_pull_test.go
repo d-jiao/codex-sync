@@ -129,11 +129,11 @@ type testEnv struct {
 func setupTestEnv(t *testing.T) *testEnv {
 	t.Helper()
 	tmpDir := t.TempDir()
-	claudeDir := filepath.Join(tmpDir, ".claude")
+	claudeDir := filepath.Join(tmpDir, ".codex")
 	stateDir := filepath.Join(tmpDir, ".codex-sync")
 
 	if err := os.MkdirAll(claudeDir, 0755); err != nil {
-		t.Fatalf("Failed to create claude dir: %v", err)
+		t.Fatalf("Failed to create base dir: %v", err)
 	}
 	if err := os.MkdirAll(stateDir, 0700); err != nil {
 		t.Fatalf("Failed to create state dir: %v", err)
@@ -162,6 +162,7 @@ func setupTestEnv(t *testing.T) *testEnv {
 		claudeDir: claudeDir,
 		quiet:     true,
 		cfg:       &config.Config{},
+		trashDir:  filepath.Join(stateDir, "trash"),
 	}
 
 	return &testEnv{
@@ -196,8 +197,8 @@ func TestPushUploadsNewFiles(t *testing.T) {
 	env := setupTestEnv(t)
 	ctx := context.Background()
 
-	writeFile(t, env.claudeDir, "CLAUDE.md", "# My Settings")
-	writeFile(t, env.claudeDir, "settings.json", `{"theme":"dark"}`)
+	writeFile(t, env.claudeDir, "AGENTS.md", "# My Settings")
+	writeFile(t, env.claudeDir, "config.toml", `{"theme":"dark"}`)
 
 	result, err := env.syncer.Push(ctx)
 	if err != nil {
@@ -227,7 +228,7 @@ func TestPushUploadsModifiedFiles(t *testing.T) {
 	env := setupTestEnv(t)
 	ctx := context.Background()
 
-	writeFile(t, env.claudeDir, "CLAUDE.md", "# V1")
+	writeFile(t, env.claudeDir, "AGENTS.md", "# V1")
 
 	// Initial push
 	result, err := env.syncer.Push(ctx)
@@ -239,7 +240,7 @@ func TestPushUploadsModifiedFiles(t *testing.T) {
 	}
 
 	// Modify the file
-	writeFile(t, env.claudeDir, "CLAUDE.md", "# V2 - modified")
+	writeFile(t, env.claudeDir, "AGENTS.md", "# V2 - modified")
 
 	// Second push
 	result, err = env.syncer.Push(ctx)
@@ -255,7 +256,7 @@ func TestPushDeletesRemovedFiles(t *testing.T) {
 	env := setupTestEnv(t)
 	ctx := context.Background()
 
-	writeFile(t, env.claudeDir, "CLAUDE.md", "# Settings")
+	writeFile(t, env.claudeDir, "AGENTS.md", "# Settings")
 
 	// Push
 	if _, err := env.syncer.Push(ctx); err != nil {
@@ -263,7 +264,7 @@ func TestPushDeletesRemovedFiles(t *testing.T) {
 	}
 
 	// Delete local file
-	_ = os.Remove(filepath.Join(env.claudeDir, "CLAUDE.md"))
+	_ = os.Remove(filepath.Join(env.claudeDir, "AGENTS.md"))
 
 	// Push again
 	result, err := env.syncer.Push(ctx)
@@ -291,7 +292,7 @@ func TestPullDownloadsNewRemoteFiles(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Encrypt failed: %v", err)
 	}
-	if err := env.store.Upload(ctx, "CLAUDE.md.age", encrypted); err != nil {
+	if err := env.store.Upload(ctx, "AGENTS.md.age", encrypted); err != nil {
 		t.Fatalf("Upload to mock failed: %v", err)
 	}
 
@@ -305,7 +306,7 @@ func TestPullDownloadsNewRemoteFiles(t *testing.T) {
 	}
 
 	// Verify local file
-	got := readFile(t, env.claudeDir, "CLAUDE.md")
+	got := readFile(t, env.claudeDir, "AGENTS.md")
 	if got != "# Remote Settings" {
 		t.Errorf("Expected '# Remote Settings', got %q", got)
 	}
@@ -315,7 +316,7 @@ func TestPullSkipsUnchangedFiles(t *testing.T) {
 	env := setupTestEnv(t)
 	ctx := context.Background()
 
-	writeFile(t, env.claudeDir, "CLAUDE.md", "# Synced")
+	writeFile(t, env.claudeDir, "AGENTS.md", "# Synced")
 
 	// Push to establish state
 	if _, err := env.syncer.Push(ctx); err != nil {
@@ -336,7 +337,8 @@ func TestPullDetectsConflicts(t *testing.T) {
 	env := setupTestEnv(t)
 	ctx := context.Background()
 
-	writeFile(t, env.claudeDir, "history.jsonl", `{"event":"local-v1"}`)
+	const relPath = "sessions/2026/01/01/rollout-conflict.jsonl"
+	writeFile(t, env.claudeDir, relPath, `{"event":"local-v1"}`)
 
 	// Push to establish baseline
 	if _, err := env.syncer.Push(ctx); err != nil {
@@ -344,7 +346,7 @@ func TestPullDetectsConflicts(t *testing.T) {
 	}
 
 	// Modify local file (simulating local changes)
-	writeFile(t, env.claudeDir, "history.jsonl", `{"event":"local-v2"}`)
+	writeFile(t, env.claudeDir, relPath, `{"event":"local-v2"}`)
 
 	// Modify remote file (simulating another device pushing)
 	remoteContent := []byte(`{"event":"remote-v2"}`)
@@ -354,7 +356,7 @@ func TestPullDetectsConflicts(t *testing.T) {
 	}
 	// Small delay to ensure remote timestamp is after the state's Uploaded time
 	time.Sleep(10 * time.Millisecond)
-	if err := env.store.Upload(ctx, "history.jsonl.age", encrypted); err != nil {
+	if err := env.store.Upload(ctx, env.syncer.remoteKey(relPath), encrypted); err != nil {
 		t.Fatalf("Upload to mock failed: %v", err)
 	}
 
@@ -368,22 +370,24 @@ func TestPullDetectsConflicts(t *testing.T) {
 	}
 
 	// Local file should be preserved
-	got := readFile(t, env.claudeDir, "history.jsonl")
+	got := readFile(t, env.claudeDir, relPath)
 	if got != `{"event":"local-v2"}` {
 		t.Errorf("Local file should be preserved, got %q", got)
 	}
 
-	// A .conflict file should exist
-	entries, err := os.ReadDir(env.claudeDir)
+	// A .conflict file should exist alongside the rollout
+	dir := filepath.Join(env.claudeDir, filepath.Dir(relPath))
+	entries, err := os.ReadDir(dir)
 	if err != nil {
 		t.Fatalf("ReadDir failed: %v", err)
 	}
 	conflictFound := false
+	prefix := filepath.Base(relPath) + ".conflict."
 	for _, e := range entries {
-		if strings.HasPrefix(e.Name(), "history.jsonl.conflict.") {
+		if strings.HasPrefix(e.Name(), prefix) {
 			conflictFound = true
 			// Verify conflict file contains remote content
-			data, _ := os.ReadFile(filepath.Join(env.claudeDir, e.Name()))
+			data, _ := os.ReadFile(filepath.Join(dir, e.Name()))
 			if string(data) != `{"event":"remote-v2"}` {
 				t.Errorf("Conflict file should contain remote content, got %q", string(data))
 			}
@@ -398,7 +402,7 @@ func TestNoConflictWhenOnlyRemoteChanged(t *testing.T) {
 	env := setupTestEnv(t)
 	ctx := context.Background()
 
-	writeFile(t, env.claudeDir, "CLAUDE.md", "# V1")
+	writeFile(t, env.claudeDir, "AGENTS.md", "# V1")
 
 	// Push to establish baseline
 	if _, err := env.syncer.Push(ctx); err != nil {
@@ -412,7 +416,7 @@ func TestNoConflictWhenOnlyRemoteChanged(t *testing.T) {
 		t.Fatalf("Encrypt failed: %v", err)
 	}
 	time.Sleep(10 * time.Millisecond)
-	if err := env.store.Upload(ctx, "CLAUDE.md.age", encrypted); err != nil {
+	if err := env.store.Upload(ctx, "AGENTS.md.age", encrypted); err != nil {
 		t.Fatalf("Upload to mock failed: %v", err)
 	}
 
@@ -429,7 +433,7 @@ func TestNoConflictWhenOnlyRemoteChanged(t *testing.T) {
 		t.Errorf("Expected 1 download, got %d", len(result.Downloaded))
 	}
 
-	got := readFile(t, env.claudeDir, "CLAUDE.md")
+	got := readFile(t, env.claudeDir, "AGENTS.md")
 	if got != "# V2 from other device" {
 		t.Errorf("Expected remote content, got %q", got)
 	}
@@ -456,10 +460,10 @@ func TestPushThenPullRoundTrip(t *testing.T) {
 	sharedStore := newMockStorage()
 
 	// Device A setup
-	deviceADir := filepath.Join(tmpDir, "deviceA", ".claude")
+	deviceADir := filepath.Join(tmpDir, "deviceA", ".codex")
 	deviceAStateDir := filepath.Join(tmpDir, "deviceA", ".codex-sync")
 	if err := os.MkdirAll(deviceADir, 0755); err != nil {
-		t.Fatalf("Failed to create deviceA claude dir: %v", err)
+		t.Fatalf("Failed to create deviceA base dir: %v", err)
 	}
 	if err := os.MkdirAll(deviceAStateDir, 0700); err != nil {
 		t.Fatalf("Failed to create deviceA state dir: %v", err)
@@ -473,12 +477,13 @@ func TestPushThenPullRoundTrip(t *testing.T) {
 		claudeDir: deviceADir,
 		quiet:     true,
 		cfg:       &config.Config{},
+		trashDir:  filepath.Join(deviceAStateDir, "trash"),
 	}
 
 	// Device A creates files and pushes
-	writeFile(t, deviceADir, "CLAUDE.md", "# Shared config")
-	writeFile(t, deviceADir, "settings.json", `{"theme":"dark","fontSize":14}`)
-	writeFile(t, deviceADir, "agents/helper.json", `{"name":"helper","model":"opus"}`)
+	writeFile(t, deviceADir, "AGENTS.md", "# Shared config")
+	writeFile(t, deviceADir, "config.toml", `{"theme":"dark","fontSize":14}`)
+	writeFile(t, deviceADir, "skills/helper.json", `{"name":"helper","model":"opus"}`)
 
 	ctx := context.Background()
 	resultA, err := syncerA.Push(ctx)
@@ -490,10 +495,10 @@ func TestPushThenPullRoundTrip(t *testing.T) {
 	}
 
 	// Device B setup (fresh, no local files)
-	deviceBDir := filepath.Join(tmpDir, "deviceB", ".claude")
+	deviceBDir := filepath.Join(tmpDir, "deviceB", ".codex")
 	deviceBStateDir := filepath.Join(tmpDir, "deviceB", ".codex-sync")
 	if err := os.MkdirAll(deviceBDir, 0755); err != nil {
-		t.Fatalf("Failed to create deviceB claude dir: %v", err)
+		t.Fatalf("Failed to create deviceB base dir: %v", err)
 	}
 	if err := os.MkdirAll(deviceBStateDir, 0700); err != nil {
 		t.Fatalf("Failed to create deviceB state dir: %v", err)
@@ -507,6 +512,7 @@ func TestPushThenPullRoundTrip(t *testing.T) {
 		claudeDir: deviceBDir,
 		quiet:     true,
 		cfg:       &config.Config{},
+		trashDir:  filepath.Join(deviceBStateDir, "trash"),
 	}
 
 	// Device B pulls
@@ -519,14 +525,14 @@ func TestPushThenPullRoundTrip(t *testing.T) {
 	}
 
 	// Verify content matches
-	if got := readFile(t, deviceBDir, "CLAUDE.md"); got != "# Shared config" {
-		t.Errorf("CLAUDE.md mismatch: %q", got)
+	if got := readFile(t, deviceBDir, "AGENTS.md"); got != "# Shared config" {
+		t.Errorf("AGENTS.md mismatch: %q", got)
 	}
-	if got := readFile(t, deviceBDir, "settings.json"); got != `{"theme":"dark","fontSize":14}` {
-		t.Errorf("settings.json mismatch: %q", got)
+	if got := readFile(t, deviceBDir, "config.toml"); got != `{"theme":"dark","fontSize":14}` {
+		t.Errorf("config.toml mismatch: %q", got)
 	}
-	if got := readFile(t, deviceBDir, "agents/helper.json"); got != `{"name":"helper","model":"opus"}` {
-		t.Errorf("agents/helper.json mismatch: %q", got)
+	if got := readFile(t, deviceBDir, "skills/helper.json"); got != `{"name":"helper","model":"opus"}` {
+		t.Errorf("skills/helper.json mismatch: %q", got)
 	}
 }
 
@@ -534,20 +540,22 @@ func TestConflictCreatesConflictFile(t *testing.T) {
 	env := setupTestEnv(t)
 	ctx := context.Background()
 
-	// Push initial version of history.jsonl
-	writeFile(t, env.claudeDir, "history.jsonl", "line1\n")
+	const relPath = "sessions/2026/01/01/rollout-conflict.jsonl"
+
+	// Push initial version of the rollout
+	writeFile(t, env.claudeDir, relPath, "line1\n")
 	if _, err := env.syncer.Push(ctx); err != nil {
 		t.Fatalf("Push failed: %v", err)
 	}
 
 	// Local appends
-	writeFile(t, env.claudeDir, "history.jsonl", "line1\nline2-local\n")
+	writeFile(t, env.claudeDir, relPath, "line1\nline2-local\n")
 
 	// Remote also changed
 	remoteData := []byte("line1\nline2-remote\n")
 	encrypted, _ := env.syncer.encryptor.Encrypt(remoteData)
 	time.Sleep(10 * time.Millisecond)
-	if err := env.store.Upload(ctx, "history.jsonl.age", encrypted); err != nil {
+	if err := env.store.Upload(ctx, env.syncer.remoteKey(relPath), encrypted); err != nil {
 		t.Fatalf("Upload to mock failed: %v", err)
 	}
 
@@ -561,23 +569,25 @@ func TestConflictCreatesConflictFile(t *testing.T) {
 	if len(result.Conflicts) != 1 {
 		t.Fatalf("Expected 1 conflict, got %d", len(result.Conflicts))
 	}
-	if result.Conflicts[0] != "history.jsonl" {
-		t.Errorf("Expected conflict on history.jsonl, got %s", result.Conflicts[0])
+	if result.Conflicts[0] != relPath {
+		t.Errorf("Expected conflict on %s, got %s", relPath, result.Conflicts[0])
 	}
 
 	// Local preserved
-	local := readFile(t, env.claudeDir, "history.jsonl")
+	local := readFile(t, env.claudeDir, relPath)
 	if local != "line1\nline2-local\n" {
 		t.Errorf("Local should be preserved, got %q", local)
 	}
 
-	// Conflict file has remote content
-	entries, _ := os.ReadDir(env.claudeDir)
+	// Conflict file has remote content, alongside the rollout
+	dir := filepath.Join(env.claudeDir, filepath.Dir(relPath))
+	entries, _ := os.ReadDir(dir)
 	found := false
+	prefix := filepath.Base(relPath) + ".conflict."
 	for _, e := range entries {
-		if strings.Contains(e.Name(), "history.jsonl.conflict.") {
+		if strings.Contains(e.Name(), prefix) {
 			found = true
-			data, _ := os.ReadFile(filepath.Join(env.claudeDir, e.Name()))
+			data, _ := os.ReadFile(filepath.Join(dir, e.Name()))
 			if string(data) != "line1\nline2-remote\n" {
 				t.Errorf("Conflict file content mismatch: %q", string(data))
 			}
@@ -620,10 +630,10 @@ func TestPullEmptyRemoteIsNoop(t *testing.T) {
 }
 
 // TestPullSetsRestrictivePermissions verifies that files created by a pull are
-// 0600 and directories created by a pull are 0700. ~/.claude can contain API
+// 0600 and directories created by a pull are 0700. ~/.codex can contain API
 // keys, prompts, and personal context, so it must not be world-readable.
 //
-// Uses a nested remote path (agents/helper.json) so the pull actually has to
+// Uses a nested remote path (skills/helper.json) so the pull actually has to
 // create the parent directory — os.MkdirAll does not modify the mode of
 // pre-existing directories, and env.claudeDir was created at 0755 by setup.
 func TestPullSetsRestrictivePermissions(t *testing.T) {
@@ -635,7 +645,7 @@ func TestPullSetsRestrictivePermissions(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Encrypt failed: %v", err)
 	}
-	if err := env.store.Upload(ctx, "agents/helper.json.age", encrypted); err != nil {
+	if err := env.store.Upload(ctx, "skills/helper.json.age", encrypted); err != nil {
 		t.Fatalf("Upload to mock failed: %v", err)
 	}
 
@@ -644,7 +654,7 @@ func TestPullSetsRestrictivePermissions(t *testing.T) {
 	}
 
 	// File created by pull must be user-only readable/writable.
-	filePath := filepath.Join(env.claudeDir, "agents/helper.json")
+	filePath := filepath.Join(env.claudeDir, "skills/helper.json")
 	fi, err := os.Stat(filePath)
 	if err != nil {
 		t.Fatalf("Stat file failed: %v", err)
@@ -654,7 +664,7 @@ func TestPullSetsRestrictivePermissions(t *testing.T) {
 	}
 
 	// Directory created by pull must be user-only.
-	dirPath := filepath.Join(env.claudeDir, "agents")
+	dirPath := filepath.Join(env.claudeDir, "skills")
 	di, err := os.Stat(dirPath)
 	if err != nil {
 		t.Fatalf("Stat dir failed: %v", err)

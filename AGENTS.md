@@ -7,5 +7,5 @@ Read these first:
 
 - `plan/task_plan.md` — goal, phases, open questions, decisions, current status
 - `plan/notes.md` — research: `~/.codex` inventory, claude-sync internals map, upstream-sync recipe
-- `CLAUDE.md` — build/test/architecture guidance (still describes claude-sync's engine; valid for build and test)
+- `CLAUDE.md` — build, test and architecture guidance
 - `docs/specs/` — design specs

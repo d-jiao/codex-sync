@@ -14,11 +14,11 @@ import (
 func TestFullWorkflowWithLocalState(t *testing.T) {
 	// Set up temporary directories
 	tmpDir := t.TempDir()
-	claudeDir := filepath.Join(tmpDir, ".claude")
+	claudeDir := filepath.Join(tmpDir, ".codex")
 	configDir := filepath.Join(tmpDir, ".codex-sync")
 
 	if err := os.MkdirAll(claudeDir, 0755); err != nil {
-		t.Fatalf("Failed to create claude dir: %v", err)
+		t.Fatalf("Failed to create base dir: %v", err)
 	}
 	if err := os.MkdirAll(configDir, 0700); err != nil {
 		t.Fatalf("Failed to create config dir: %v", err)
@@ -39,7 +39,7 @@ func TestFullWorkflowWithLocalState(t *testing.T) {
 		t.Fatalf("Failed to create encryptor: %v", err)
 	}
 
-	// Create test files in claude directory
+	// Create test files in the base directory
 	testFiles := map[string]string{
 		"CLAUDE.md":     "# My Claude Settings\n\nThis is a test.",
 		"settings.json": `{"theme": "dark", "autoSave": true}`,
@@ -201,9 +201,9 @@ func TestCrossDeviceSyncWithPassphrase(t *testing.T) {
 // TestSyncStateDetectsAllChangeTypes tests add, modify, delete detection
 func TestSyncStateDetectsAllChangeTypes(t *testing.T) {
 	tmpDir := t.TempDir()
-	claudeDir := filepath.Join(tmpDir, ".claude")
+	claudeDir := filepath.Join(tmpDir, ".codex")
 	if err := os.MkdirAll(claudeDir, 0755); err != nil {
-		t.Fatalf("Failed to create claude dir: %v", err)
+		t.Fatalf("Failed to create base dir: %v", err)
 	}
 
 	state := NewState()
@@ -290,15 +290,15 @@ func TestConfigPaths(t *testing.T) {
 	if config.AgeKeyFilePath() == "" {
 		t.Error("AgeKeyFilePath should not be empty")
 	}
-	if config.ClaudeDir() == "" {
-		t.Error("ClaudeDir should not be empty")
+	if config.BaseDir() == "" {
+		t.Error("BaseDir should not be empty")
 	}
 }
 
 // TestSyncPathsConfig verifies sync paths are properly configured
 func TestSyncPathsConfig(t *testing.T) {
 	// Verify expected paths are in SyncPaths
-	expectedPaths := []string{"CLAUDE.md", "settings.json", "agents", "skills", "plugins"}
+	expectedPaths := []string{"sessions", "config.toml", "skills", "rules", "AGENTS.md"}
 
 	for _, expected := range expectedPaths {
 		found := false
