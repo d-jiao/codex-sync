@@ -19,6 +19,12 @@
 - Merge tie-breaks (same `id` and `updated_at`; equal history `ts`) use the raw line bytes, never arrival order.
 - The `logs*` hard exclude is gone (`logs/` and `*.sqlite*` still cover the real targets); `*.conflict.*` is hard-excluded.
 
+### Fixed
+
+- `conflicts --keep local` now records the remote's hash instead of marking the kept
+  file as uploaded, so the next push publishes the kept version (previously it was never
+  pushed and the other machine kept its own copy).
+
 ### Removed
 
 - `mcp` command and the `mcp_sync` / `--include-mcp` options — Codex MCP servers live in `config.toml`, which syncs as a plain file.

@@ -1531,6 +1531,51 @@ func findConflicts(baseDir string) ([]conflictFile, error) {
 	return conflicts, err
 }
 
+// keepLocal resolves a conflict in favor of the local file. The sidecar holds
+// the remote version, so its hash is what state must record: the next push then
+// sees the local file as modified and publishes it, while the next pull sees
+// nothing newer than what was just resolved and does not re-conflict.
+func keepLocal(c conflictFile, baseDir string, state *sync.SyncState) error {
+	remoteHash, err := sync.HashFile(c.ConflictPath)
+	if err != nil {
+		return err
+	}
+	if err := os.Remove(c.ConflictPath); err != nil {
+		return err
+	}
+	return recordResolution(state, baseDir, c.OriginalPath, remoteHash)
+}
+
+// keepRemote resolves a conflict in favor of the remote version: the sidecar
+// replaces the local file, and state records that content as already synced.
+func keepRemote(c conflictFile, baseDir string, state *sync.SyncState) error {
+	if err := os.Rename(c.ConflictPath, c.OriginalPath); err != nil {
+		return err
+	}
+	hash, err := sync.HashFile(c.OriginalPath)
+	if err != nil {
+		return err
+	}
+	return recordResolution(state, baseDir, c.OriginalPath, hash)
+}
+
+// recordResolution stores hash as the last-synced content of originalPath and
+// stamps it as uploaded now, so pull treats the remote as no newer than this
+// resolution. Callers pass the hash of whatever the remote holds after resolving.
+func recordResolution(state *sync.SyncState, baseDir, originalPath, hash string) error {
+	relPath, err := filepath.Rel(baseDir, originalPath)
+	if err != nil {
+		return err
+	}
+	info, err := os.Stat(originalPath)
+	if err != nil {
+		return err
+	}
+	state.UpdateFile(filepath.ToSlash(relPath), info, hash)
+	state.MarkUploaded(filepath.ToSlash(relPath))
+	return nil
+}
+
 func batchResolveConflicts(conflicts []conflictFile, keep string, baseDir string, state *sync.SyncState) error {
 	keep = strings.ToLower(keep)
 	if keep != "local" && keep != "remote" {
@@ -1540,28 +1585,17 @@ func batchResolveConflicts(conflicts []conflictFile, keep string, baseDir string
 	resolved := 0
 	for _, c := range conflicts {
 		if keep == "local" {
-			// Delete conflict file, keep local
-			if err := os.Remove(c.ConflictPath); err != nil {
-				fmt.Printf("%s✗%s Failed to remove %s: %v\n", colorYellow, colorReset, c.ConflictPath, err)
+			if err := keepLocal(c, baseDir, state); err != nil {
+				fmt.Printf("%s✗%s Failed to keep local %s: %v\n", colorYellow, colorReset, filepath.Base(c.OriginalPath), err)
 				continue
 			}
 			fmt.Printf("%s✓%s Kept local: %s\n", colorGreen, colorReset, filepath.Base(c.OriginalPath))
 		} else {
-			// Replace local with conflict, delete conflict
-			if err := os.Rename(c.ConflictPath, c.OriginalPath); err != nil {
-				fmt.Printf("%s✗%s Failed to replace %s: %v\n", colorYellow, colorReset, c.OriginalPath, err)
+			if err := keepRemote(c, baseDir, state); err != nil {
+				fmt.Printf("%s✗%s Failed to keep remote %s: %v\n", colorYellow, colorReset, filepath.Base(c.OriginalPath), err)
 				continue
 			}
 			fmt.Printf("%s✓%s Kept remote: %s\n", colorGreen, colorReset, filepath.Base(c.OriginalPath))
-		}
-
-		// Update state with the resolved file's hash
-		relPath, _ := filepath.Rel(baseDir, c.OriginalPath)
-		if info, err := os.Stat(c.OriginalPath); err == nil {
-			if hash, err := sync.HashFile(c.OriginalPath); err == nil {
-				state.UpdateFile(relPath, info, hash)
-				state.MarkUploaded(relPath)
-			}
 		}
 		resolved++
 	}
@@ -1617,35 +1651,19 @@ func interactiveResolveConflicts(conflicts []conflictFile, baseDir string, state
 
 			switch input {
 			case "l", "local":
-				// Keep local, delete conflict
-				if err := os.Remove(c.ConflictPath); err != nil {
+				if err := keepLocal(c, baseDir, state); err != nil {
 					fmt.Printf("        %s✗%s Error: %v\n", colorYellow, colorReset, err)
 				} else {
 					fmt.Printf("        %s✓%s Kept local version\n\n", colorGreen, colorReset)
-					// Update state with the kept file's hash
-					if info, err := os.Stat(c.OriginalPath); err == nil {
-						if hash, err := sync.HashFile(c.OriginalPath); err == nil {
-							state.UpdateFile(relOriginal, info, hash)
-							state.MarkUploaded(relOriginal)
-						}
-					}
 					resolved++
 				}
 				break promptLoop
 
 			case "r", "remote":
-				// Replace local with conflict
-				if err := os.Rename(c.ConflictPath, c.OriginalPath); err != nil {
+				if err := keepRemote(c, baseDir, state); err != nil {
 					fmt.Printf("        %s✗%s Error: %v\n", colorYellow, colorReset, err)
 				} else {
 					fmt.Printf("        %s✓%s Replaced with remote version\n\n", colorGreen, colorReset)
-					// Update state with the new file's hash
-					if info, err := os.Stat(c.OriginalPath); err == nil {
-						if hash, err := sync.HashFile(c.OriginalPath); err == nil {
-							state.UpdateFile(relOriginal, info, hash)
-							state.MarkUploaded(relOriginal)
-						}
-					}
 					resolved++
 				}
 				break promptLoop
