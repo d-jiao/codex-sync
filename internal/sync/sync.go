@@ -505,11 +505,20 @@ func (s *Syncer) uploadFile(ctx context.Context, relativePath string) error {
 		return fmt.Errorf("failed to upload: %w", err)
 	}
 
+	// Storage services stamp objects with their own clock, and that stamp can
+	// land a few milliseconds after the upload call returns (R2 does this).
+	// Record the later of the two so this upload never looks newer than
+	// "uploaded" to the next pull, which would re-download identical bytes.
+	uploadedAt := time.Now()
+	if hdr, err := s.storage.Head(ctx, remoteKey); err == nil && hdr != nil && hdr.LastModified.After(uploadedAt) {
+		uploadedAt = hdr.LastModified
+	}
+
 	// Update state
 	info, _ := os.Stat(fullPath)
 	hash, _ := HashFile(fullPath)
 	s.state.UpdateFile(relativePath, info, hash)
-	s.state.MarkUploaded(relativePath)
+	s.state.MarkUploadedAt(relativePath, uploadedAt)
 
 	return nil
 }

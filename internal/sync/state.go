@@ -145,10 +145,18 @@ func (s *SyncState) UpdateFile(relativePath string, info os.FileInfo, hash strin
 }
 
 func (s *SyncState) MarkUploaded(relativePath string) {
+	s.MarkUploadedAt(relativePath, time.Now())
+}
+
+// MarkUploadedAt records when the remote copy of relativePath was last known to
+// match the local one. Pull treats a remote object as changed only when its
+// LastModified is after this stamp, so callers pass the remote's own timestamp
+// when it is later than the local clock.
+func (s *SyncState) MarkUploadedAt(relativePath string, at time.Time) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if f, ok := s.Files[relativePath]; ok {
-		f.Uploaded = time.Now()
+		f.Uploaded = at
 	}
 }
 
