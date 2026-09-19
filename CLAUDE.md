@@ -60,7 +60,7 @@ Layered, with a pluggable storage abstraction:
 ├── age-key.txt  # encryption identity (derived or random)
 ├── state.json   # per-file hash/size/mtime + last push/pull times
 ├── trash/       # files pull removed locally, one batch dir per run (never touched by `reset`)
-└── db-backup-<ts>/  # Codex databases + session index copied by `desktop refresh` before it writes (never pruned)
+└── db-backup-<ts>/  # Codex databases (minus logs_*) + session index copied by `desktop refresh` before it writes (never pruned)
 
 ~/.codex/        # what gets synced (see config.SyncPaths)
 ```

@@ -53,7 +53,7 @@ func TestResolveEnginePrecedence(t *testing.T) {
 
 func TestBackupCopiesDatabasesAndIndex(t *testing.T) {
 	base := t.TempDir()
-	for _, rel := range []string{"state_5.sqlite", "state_5.sqlite-wal", "memories_1.sqlite", "goals_1.sqlite-shm", "session_index.jsonl", "sqlite/codex-dev.db", "sqlite/codex-dev.db-shm", "sqlite/other.db", "config.toml"} {
+	for _, rel := range []string{"state_5.sqlite", "state_5.sqlite-wal", "memories_1.sqlite", "goals_1.sqlite-shm", "logs_2.sqlite", "logs_2.sqlite-wal", "session_index.jsonl", "sqlite/codex-dev.db", "sqlite/codex-dev.db-shm", "sqlite/other.db", "config.toml"} {
 		p := filepath.Join(base, filepath.FromSlash(rel))
 		if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
 			t.Fatal(err)
@@ -77,9 +77,9 @@ func TestBackupCopiesDatabasesAndIndex(t *testing.T) {
 			t.Errorf("%s not backed up (%v)", rel, err)
 		}
 	}
-	for _, rel := range []string{"sqlite/other.db", "config.toml"} {
+	for _, rel := range []string{"sqlite/other.db", "config.toml", "logs_2.sqlite", "logs_2.sqlite-wal"} {
 		if _, err := os.Stat(filepath.Join(dest, filepath.FromSlash(rel))); err == nil {
-			t.Errorf("%s was copied but is not a database the refresh touches", rel)
+			t.Errorf("%s was copied but is not state the refresh needs to preserve", rel)
 		}
 	}
 }

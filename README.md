@@ -87,9 +87,10 @@ pull, then reports the running app and exits non-zero, so `pull --desktop && pus
 stops there; quit the app and run `codex-sync desktop refresh`. The refresh is
 safe to run repeatedly. The engine used is the ChatGPT app's bundled one
 (`--codex-bin` / `$CODEX_BIN` override it; a different engine version may migrate
-every Codex database, which is why all of them are backed up). Backups
-accumulate — every run writes a full copy of the databases — and nothing
-references them, so old `db-backup-*` directories are safe to delete.
+every Codex database, which is why all of them are backed up, except the
+engine's log store). Backups accumulate — every run writes a full copy of the
+databases, well over 100 MB with a large history — and nothing references them,
+so old `db-backup-*` directories are safe to delete.
 
 ## How push behaves
 
