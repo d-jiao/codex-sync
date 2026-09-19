@@ -68,19 +68,23 @@ the current scope is rejected rather than silently widening it.
 The ChatGPT desktop app keeps its own thread catalog and fills it incrementally:
 after a one-time full build it only looks at threads newer than the last one it
 saw, so a thread that arrives via sync — whose timestamps are older — never
-appears in its sidebar on its own. After a pull that brought new threads, quit
-the ChatGPT app and run:
+appears in its sidebar on its own. Quit the ChatGPT app, then either pull with
+the refresh built in or run the refresh alone:
 
 ```bash
-python3 scripts/codex-desktop-refresh.py
+codex-sync pull --desktop      # pull, then refresh the desktop app
+codex-sync desktop refresh     # refresh only (after an earlier pull)
 ```
 
-It backs up the app's databases to `~/.codex-sync/db-backup-<timestamp>/`, has
-the app's own engine index the new rollouts, copies thread names from the synced
-`session_index.jsonl` into the engine database, and schedules the app's full
-catalog sweep for its next launch. Relaunch the app and the pulled threads show
-up, named. The script refuses to run while the app or a `codex` process is open,
-and it is safe to run repeatedly.
+The refresh backs up the app's databases to `~/.codex-sync/db-backup-<timestamp>/`,
+has the app's own engine index the new rollouts, copies thread names from the
+synced `session_index.jsonl` into the engine database (`--no-names` skips this),
+and schedules the app's full catalog sweep for its next launch. Relaunch the app
+and the pulled threads show up, named. It refuses to run while the app or a
+`codex` process is open — `pull --desktop` still completes the pull and then
+tells you to quit the app and run `codex-sync desktop refresh` — and it is safe
+to run repeatedly. The engine used is the ChatGPT app's bundled one
+(`--codex-bin` / `$CODEX_BIN` override it).
 
 ## How push behaves
 
@@ -92,8 +96,8 @@ with `codex-sync conflicts`; the sidecar itself is never uploaded.
 ## Limitations (v1)
 
 - Pulled threads do not appear in the ChatGPT desktop app, and carry no name in
-  the CLI, until you run `scripts/codex-desktop-refresh.py` (see above); Codex
-  itself never re-reads the synced index or rescans older rollouts.
+  the CLI, until `codex-sync desktop refresh` (or `pull --desktop`) runs with the
+  app quit; Codex itself never re-reads the synced index or rescans older rollouts.
 - Do not resume the same thread on two Macs between syncs; you would get a
   conflict sidecar instead of a merged transcript.
 - Project organization, automations and the memories database live only in
@@ -221,6 +225,7 @@ codex-sync pull
 codex-sync init         # Set up configuration (interactive wizard)
 codex-sync push         # Upload local changes to cloud storage
 codex-sync pull         # Download remote changes from cloud storage
+codex-sync desktop refresh  # Make pulled threads visible in the ChatGPT desktop app
 codex-sync status       # Show pending local changes
 codex-sync diff         # Show differences between local and remote
 codex-sync conflicts    # List and resolve conflicts

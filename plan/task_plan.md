@@ -107,7 +107,7 @@ work continues on either machine — what claude-sync already does for `~/.claud
   secret into the transcript → rotate the token.
 
 ## Status
-**Phase 5 done** — manual sync on both Macs (no launchd by decision); desktop-app refresh script applied here, pending on Bob. Next: rotate the R2 token that leaked into the transcript (`init --force` with the new keys on both), then Phase 6.
+**Phase 5 done** — manual sync on both Macs (no launchd by decision); desktop refresh is now `codex-sync desktop refresh` / `pull --desktop`; run it on Bob after `git pull && make install`. Next: rotate the R2 token that leaked into the transcript (`init --force` with the new keys on both), then Phase 6.
 
 ## Follow-ups after the whole-branch review (2026-09-15)
 
@@ -155,5 +155,6 @@ conflict resolution across machines.
     scans) and its engine only indexes rollouts it discovers itself. Manual remedy shipped
     as `scripts/codex-desktop-refresh.py` (backup → engine index run → names from
     `session_index.jsonl` into `threads.name` → clear `last_full_reconciled_at`); verified
-    here: catalog 62 → 143 threads, all named. Follow-up: fold it into `codex-sync pull`
-    (opt-in, refuses while the app runs) or a `codex-sync refresh` command in Go.
+    here: catalog 62 → 143 threads, all named. ~~Follow-up: fold it into `codex-sync pull`~~
+    Done 2026-09-19: `internal/desktop` + `codex-sync desktop refresh` / `pull --desktop`
+    (script removed).

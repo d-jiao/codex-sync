@@ -153,10 +153,10 @@ a conflict instead. The CLI engine indexes pulled rollouts on its next `thread/l
 (spike). The desktop app does not: its catalog (`sqlite/codex-dev.db`) is built in full
 once and then scanned incrementally past an `updated_at` watermark, so pulled threads —
 always older than the watermark — never appear until the full sweep is re-run
-(verified 2026-09-16, see §13). `scripts/codex-desktop-refresh.py` does that with the app
-quit: index via the app's engine, copy names from `session_index.jsonl` into
-`threads.name` (§8), clear `last_full_reconciled_at`. Recommended: run it after any pull
-that brought new threads.
+(verified 2026-09-16, see §13). `codex-sync desktop refresh` (also `pull --desktop`) does
+that with the app quit: index via the app's engine, copy names from `session_index.jsonl`
+into `threads.name` (§8), clear `last_full_reconciled_at`. Run it after any pull that
+brought new threads.
 
 ## 10. CLI surface
 
@@ -205,7 +205,7 @@ atomic per file (write temp, rename).
 - ~~Does the desktop app's catalog pick up pulled threads without a restart, and how fast?~~
   Never (2026-09-16): `isFullReconciliationDue` is true only until the first full build;
   afterwards scans stop at the `updated_at` watermark. Resolved by
-  `scripts/codex-desktop-refresh.py` (§9); folding it into `pull` is a follow-up.
+  `codex-sync desktop refresh` and `pull --desktop` (§9).
 - Do `*.conflict.*` sidecars inside `sessions/` stay invisible to Codex?
 - Does Codex refresh `updated_at`/preview when a synced rollout grows? (`thread/list`
   reported the file's mtime, which suggests yes.)
