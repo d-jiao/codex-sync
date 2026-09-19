@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -42,6 +43,16 @@ func TestHelperProcess(t *testing.T) {
 	if mode == "die" {
 		_, _ = fmt.Fprintln(os.Stderr, "boom: unknown subcommand app-server")
 		os.Exit(2)
+	}
+	if mode == "orphan" {
+		// A grandchild that inherits our stderr and outlives us, like an MCP
+		// server the real engine spawns; it must not keep the client waiting.
+		child := exec.Command("sleep", "20")
+		child.Stderr = os.Stderr
+		if err := child.Start(); err != nil {
+			_, _ = fmt.Fprintln(os.Stderr, err)
+			os.Exit(2)
+		}
 	}
 	logf, _ := os.OpenFile(os.Getenv("FAKE_CODEX_LOG"), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
 	defer func() { _ = logf.Close() }()
@@ -205,5 +216,23 @@ func TestIndexRolloutsIncludesStderrAndExitStatusWhenTheEngineDies(t *testing.T)
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("error lacks %q: %v", want, err)
 		}
+	}
+}
+
+func TestIndexRolloutsReturnsWhenAGrandchildKeepsStderrOpen(t *testing.T) {
+	bin := fakeEngine(t, filepath.Join(t.TempDir(), "requests.log"), "orphan")
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	start := time.Now()
+	listed, err := IndexRollouts(ctx, bin, t.TempDir(), []string{"openai"})
+	if err != nil {
+		t.Fatalf("err = %v (after %s)", err, time.Since(start))
+	}
+	if listed.Live != 3 || listed.Archived != 1 {
+		t.Errorf("listed = %+v, want 3 live, 1 archived", listed)
+	}
+	if elapsed := time.Since(start); elapsed > 12*time.Second {
+		t.Errorf("IndexRollouts took %s; the orphaned grandchild kept it waiting", elapsed)
 	}
 }

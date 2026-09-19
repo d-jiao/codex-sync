@@ -106,6 +106,9 @@ type engine struct {
 func startEngine(ctx context.Context, bin, baseDir string) (*engine, error) {
 	cmd := exec.CommandContext(ctx, bin, "app-server", "--stdio")
 	cmd.Env = append(os.Environ(), "CODEX_HOME="+baseDir)
+	// Stderr is a pipe, and Wait would otherwise block until every process that
+	// inherited it — an MCP server the engine spawned, say — has exited.
+	cmd.WaitDelay = shutdownGrace
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		return nil, err
@@ -195,7 +198,8 @@ func (e *engine) call(ctx context.Context, method string, params any) (json.RawM
 	e.next++
 	id := e.next
 	if err := e.send(map[string]any{"id": id, "method": method, "params": params}); err != nil {
-		return nil, fmt.Errorf("%s: %w", method, err)
+		// A broken pipe means the engine already died; say why rather than EPIPE.
+		return nil, fmt.Errorf("%s: %s", method, e.exitReason())
 	}
 	deadline := time.NewTimer(requestTimeout)
 	defer deadline.Stop()
