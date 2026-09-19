@@ -119,7 +119,7 @@ func TestIndexRolloutsPagesThroughLiveAndArchivedThreads(t *testing.T) {
 	base := t.TempDir()
 	bin := fakeEngine(t, logPath, "ok")
 
-	listed, err := IndexRollouts(context.Background(), bin, base, []string{"cpa", "openai"})
+	listed, err := IndexRollouts(context.Background(), bin, base, []string{"acme", "openai"})
 	if err != nil {
 		t.Fatal(err)
 	}

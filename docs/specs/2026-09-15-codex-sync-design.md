@@ -24,11 +24,14 @@ below says otherwise. This spec describes only what differs for Codex.
 
 ### Evidence base
 
-Phase 1 spike (`plan/notes.md`, "Spike results"): rollout JSONL files are the source of
-truth; a fresh `CODEX_HOME` holding only `sessions/`, `archived_sessions/` and
-`session_index.jsonl` rebuilds `state_5.sqlite` and lists the same user-visible threads
-as the original home; rollouts added later (even older ones) are discovered on the next
-listing; every `*.sqlite*` file is derived or machine-local.
+A spike run before this spec (fresh `CODEX_HOME` directories seeded with copies of a
+real home's files but none of its databases, listed non-interactively through the
+engine's `app-server` protocol and compared against the full home): rollout JSONL files
+are the source of truth; a fresh `CODEX_HOME` holding only `sessions/`,
+`archived_sessions/` and `session_index.jsonl` rebuilds `state_5.sqlite` and lists the
+same user-visible threads as the original home; rollouts added later (even older ones)
+are discovered on the next listing; every `*.sqlite*` file is derived or machine-local.
+`integration/codex_listing_check.py` is the reusable form of that comparison.
 
 ## 2. Assumptions and constraints
 

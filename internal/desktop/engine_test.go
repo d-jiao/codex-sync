@@ -9,13 +9,13 @@ import (
 
 func TestProvidersReadsConfigTomlAndAlwaysIncludesOpenAI(t *testing.T) {
 	base := t.TempDir()
-	cfg := "[model_providers.cpa]\nname = \"x\"\n[model_providers.cpa.http_headers]\nx = \"y\"\n\n  [model_providers.\"my-proxy\"]\nbase_url = \"http://localhost\"\n[other]\nfoo = 1\n"
+	cfg := "[model_providers.acme]\nname = \"x\"\n[model_providers.acme.http_headers]\nx = \"y\"\n\n  [model_providers.\"my-proxy\"]\nbase_url = \"http://localhost\"\n[other]\nfoo = 1\n"
 	if err := os.WriteFile(filepath.Join(base, "config.toml"), []byte(cfg), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
 	got := Providers(base)
-	if want := []string{"cpa", "my-proxy", "openai"}; !reflect.DeepEqual(got, want) {
+	if want := []string{"acme", "my-proxy", "openai"}; !reflect.DeepEqual(got, want) {
 		t.Errorf("Providers = %v, want %v", got, want)
 	}
 }
