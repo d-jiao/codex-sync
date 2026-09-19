@@ -5,6 +5,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -12,7 +13,8 @@ import (
 // SHM files), the desktop catalog and the session index into a new timestamped
 // directory under root and returns its path. The engine run touches more than
 // state_5.sqlite — a different engine version may migrate any of them — so all
-// are kept. Files that do not exist are skipped.
+// are kept except the engine's log store (logs_*.sqlite*), which is diagnostics
+// only and hundreds of megabytes. Files that do not exist are skipped.
 func Backup(baseDir, root string) (string, error) {
 	dest, err := newBackupDir(root)
 	if err != nil {
@@ -31,6 +33,9 @@ func Backup(baseDir, root string) (string, error) {
 		rel, err := filepath.Rel(baseDir, src)
 		if err != nil {
 			return "", err
+		}
+		if strings.HasPrefix(rel, "logs_") {
+			continue
 		}
 		if err := copyFile(src, filepath.Join(dest, rel)); err != nil && !os.IsNotExist(err) {
 			return "", err
