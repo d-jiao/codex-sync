@@ -530,7 +530,7 @@ func enterPassphraseAndVerify(ctx context.Context, store storage.Storage, keyPat
 		var passphrase string
 		for {
 			prompt := &survey.Password{
-				Message: "Passphrase (min 8 chars):",
+				Message: "Passphrase (min 12 chars):",
 			}
 			if err := survey.AskOne(prompt, &passphrase); err != nil {
 				return false, err

@@ -53,3 +53,6 @@ Thumbs.db
 
 # Superpowers worktrees
 .worktrees/
+
+# Claude Code session logs
+.claude/logs/

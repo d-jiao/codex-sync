@@ -13,11 +13,11 @@ RUN go mod download
 # Copy source code
 COPY . .
 
-# Build claude-sync binary
-RUN go build -o /usr/local/bin/claude-sync ./cmd/claude-sync
+# Build codex-sync binary
+RUN go build -o /usr/local/bin/codex-sync ./cmd/codex-sync
 
 # Create directories for test data
-RUN mkdir -p /root/.claude /root/.claude-sync
+RUN mkdir -p /root/.codex /root/.codex-sync
 
 # Default command - keep container running
 CMD ["sleep", "infinity"]

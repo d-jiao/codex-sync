@@ -22,6 +22,7 @@
 
 ### Fixed
 
+- The `init` passphrase prompt said "min 8 chars" while validation requires 12.
 - Push records the remote's own timestamp for each uploaded file when it is later
   than the local clock (R2 stamps objects a few milliseconds after the upload
   returns), so the next pull no longer re-downloads files this machine just pushed.
@@ -31,6 +32,10 @@
 
 ### Removed
 
+- The inherited claude-sync documentation pages under `docs/` (`index`, `architecture`,
+  `how-it-works`, `security`), the unrelated OpenClaw spec, and `scripts/publish-npm.sh`;
+  `docs/security.md` is now a codex-sync security model, and `CONTRIBUTING.md` /
+  `SECURITY.md` are new.
 - `mcp` command and the `mcp_sync` / `--include-mcp` options — Codex MCP servers live in `config.toml`, which syncs as a plain file.
 - `migrate` — was claude-sync's legacy remote-key-layout converter; not applicable to a new fork.
 - `rebuild-history` — superseded by merge-on-pull for `history.jsonl` (see Added).

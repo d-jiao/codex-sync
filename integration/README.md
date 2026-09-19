@@ -1,92 +1,99 @@
-# Integration Tests
+# Integration tests
 
-This directory contains integration tests that verify cross-device sync with real R2 storage.
+Tests in this directory run against **real storage** and are gated behind the
+`integration` build tag, so `make test` and CI never run them. There are two:
 
-## Prerequisites
+| What | File | Needs |
+|---|---|---|
+| Two-device sync through a real R2 bucket | `r2_sync_test.go` | R2 credentials (and Docker for the multi-container variant) |
+| Thread-listing comparison between two Codex homes | `codex_listing_check.py` | a local Codex engine binary |
 
-1. **R2 Bucket**: Create a dedicated test bucket in Cloudflare R2
-2. **API Token**: Create an R2 API token with read/write access
-3. **Docker**: Required for multi-device simulation
+> **Known gap:** `r2_sync_test.go` still writes claude-sync-era fixtures
+> (`.claude/CLAUDE.md`, `settings.json`, `projects/`), which are not in the
+> Codex sync profile, so its scenarios need to be ported to `.codex` fixtures
+> (`AGENTS.md`, `config.toml`, `rules/`, …) before they exercise the current
+> profile. Contributions welcome.
 
-## Running Tests
+## R2 sync test
 
-### With Docker (Recommended)
-
-This simulates two separate devices with isolated filesystems:
+Use a **dedicated scratch bucket** — the tests clear it — and an API token
+scoped to that bucket only.
 
 ```bash
-# Set environment variables
-export CLAUDE_SYNC_R2_ACCOUNT_ID=your_account_id
-export CLAUDE_SYNC_R2_ACCESS_KEY_ID=your_access_key
-export CLAUDE_SYNC_R2_SECRET_ACCESS_KEY=your_secret_key
-export CLAUDE_SYNC_R2_BUCKET=claude-sync-test
+export CODEX_SYNC_R2_ACCOUNT_ID=your_account_id
+export CODEX_SYNC_R2_ACCESS_KEY_ID=your_access_key
+export CODEX_SYNC_R2_SECRET_ACCESS_KEY=your_secret_key
+export CODEX_SYNC_R2_BUCKET=codex-sync-test           # default
+export CODEX_SYNC_TEST_PASSPHRASE=your-test-passphrase   # default: test-passphrase-123
 
-# Optional: custom passphrase (default: test-passphrase-123)
-export CLAUDE_SYNC_TEST_PASSPHRASE=your-test-passphrase
+go test -tags=integration -v ./integration/...
+```
 
-# Run tests
+Without credentials the tests skip.
+
+### Docker variant
+
+`docker-compose.yml` starts three containers (`device-a`, `device-b`,
+`device-c`), each with its own home directory, built from
+`Dockerfile.test`, and passes the same environment variables through:
+
+```bash
 cd integration
 docker-compose up --build
 ```
 
-### Without Docker
+### Scenarios
 
-Run Go integration tests directly (requires R2 credentials):
+1. **Basic cross-device sync** — A: init with passphrase, create files, push.
+   B: init with the same passphrase, pull. B has A's files.
+2. **Key mismatch detection** — A: init with passphrase 1, push. B: init with
+   passphrase 2. `init` detects the mismatch and offers the retry / clear-remote
+   / abort choice.
+3. **Conflict resolution** — both devices modify the same file; A pushes; B
+   pulls and gets a `.conflict.<timestamp>` sidecar with the remote content.
+4. **Reset remote and re-push** — with mismatched keys, B runs
+   `reset --remote`, `init`, `push`; A pulls and receives B's files.
 
-```bash
-export CLAUDE_SYNC_R2_ACCOUNT_ID=xxx
-export CLAUDE_SYNC_R2_ACCESS_KEY_ID=xxx
-export CLAUDE_SYNC_R2_SECRET_ACCESS_KEY=xxx
-export CLAUDE_SYNC_R2_BUCKET=claude-sync-test
+### Cleanup
 
-go test -v -tags=integration ./integration/...
-```
-
-## Test Scenarios
-
-### 1. Basic Cross-Device Sync
-- Device A: init with passphrase, create files, push
-- Device B: init with same passphrase, pull
-- Verify: Device B has same files as Device A
-
-### 2. Key Mismatch Detection
-- Device A: init with passphrase-1, push files
-- Device B: init with passphrase-2
-- Verify: init detects mismatch and offers options
-
-### 3. Conflict Resolution
-- Both devices modify same file
-- Device A pushes first
-- Device B pulls (should create .conflict file)
-- Verify: conflict file exists with correct content
-
-### 4. Reset Remote and Re-push
-- Setup with mismatched keys
-- Device B: reset --remote, init, push
-- Device A: pull
-- Verify: Device A gets Device B's files
-
-## Cleanup
-
-Tests automatically clean up the remote bucket after completion. If tests fail mid-execution, manually clear the test bucket:
+The tests clear the bucket when they finish. If a run dies halfway:
 
 ```bash
-# Using claude-sync
-claude-sync reset --remote --force
+codex-sync reset --remote --force      # with a config pointing at the test bucket
 
-# Or using AWS CLI with R2 endpoint
-aws s3 rm s3://claude-sync-test --recursive \
+# or with the AWS CLI against the R2 endpoint
+aws s3 rm s3://codex-sync-test --recursive \
   --endpoint-url https://<account_id>.r2.cloudflarestorage.com
 ```
 
-## CI/CD Integration
+### In GitHub Actions
 
-For GitHub Actions, store R2 credentials as secrets:
+Store the credentials as repository secrets and map them to the environment:
 
 ```yaml
 env:
-  CLAUDE_SYNC_R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
-  CLAUDE_SYNC_R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
-  CLAUDE_SYNC_R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
-  CLAUDE_SYNC_R2_BUCKET: claude-sync-ci-test
+  CODEX_SYNC_R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+  CODEX_SYNC_R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+  CODEX_SYNC_R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+  CODEX_SYNC_R2_BUCKET: codex-sync-ci-test
 ```
+
+## Thread-listing check
+
+`codex_listing_check.py` is the manual acceptance test for a real sync: it asks
+a Codex engine, over the `app-server` protocol, to list the user-visible
+threads in a source `$CODEX_HOME` and in a synced copy, across every model
+provider configured in the source home, and reports the difference.
+
+Run it against **copies** (or APFS clones) of the homes, never the live
+`~/.codex`: the engine writes state into whichever home it is given.
+
+```bash
+integration/codex_listing_check.py --source /path/to/copy-of-home \
+    --synced /path/to/copy-of-other-home \
+    [--codex-bin /Applications/ChatGPT.app/Contents/Resources/codex]
+```
+
+Exit codes: `0` same threads, `1` differences found, `2` the engine could not
+be started (`codex engine binary not found` — set `--codex-bin` or
+`CODEX_BIN`).

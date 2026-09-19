@@ -1,6 +1,6 @@
 # codex-sync v1 — design
 
-Status: draft for review · Date: 2026-09-15 · Supersedes nothing (first spec of the fork)
+Status: implemented (v1; §8 names and §13 desktop visibility were later resolved by `desktop refresh`) · Written: 2026-09-15 · Supersedes nothing (first spec of the fork)
 
 ## 1. Purpose
 
@@ -167,7 +167,7 @@ brought new threads.
 - Removed: `migrate` (legacy claude-sync key layout), `rebuild-history` (§6), `mcp` and
   the `mcp_sync` / `--include-mcp` options (Codex MCP servers live in `config.toml`, which
   is synced as a file).
-- Scheduling: `scripts/launchd/codex-sync.plist` template (daily `pull` then `push`, quiet
+- Scheduling: `scripts/launchd/com.codex-sync.daily.plist.template` (daily `pull` then `push`, quiet
   output) and `make install-launchd` / `make uninstall-launchd`; no scheduler code in Go.
 
 ## 11. Module changes

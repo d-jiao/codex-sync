@@ -1,7 +1,24 @@
-> **codex-sync note (2026-09-15):** this audit was inherited from claude-sync at
-> commit 49420ef. The crypto and storage design is unchanged except the Argon2
-> salt constant, which is `sha256("codex-sync-v1")` in this fork (domain
-> separation from claude-sync). It must remain fixed.
+> **codex-sync note.** This audit was written for claude-sync and inherited at
+> the fork point (commit `49420ef`); file paths and line numbers below refer to
+> that codebase. The crypto and storage design is unchanged except the Argon2
+> salt constant, which is `sha256("codex-sync-v1")` in this fork for domain
+> separation from claude-sync and must remain fixed. Status of each finding in
+> codex-sync as of 2026-09-19:
+>
+> | Finding | Status in codex-sync |
+> |---|---|
+> | M1 plaintext credentials in `config.yaml` | **Open** (accepted; documented in [docs/security.md](docs/security.md) with the advice to use bucket-scoped tokens) |
+> | M2 self-update without integrity check | **Fixed** — `update` verifies the binary against the release's `checksums.txt` (`verifyChecksum`, `cmd/codex-sync/main.go`) |
+> | M3 npm postinstall | **Not applicable** — no npm distribution |
+> | M4 fixed Argon2 salt | **Accepted design** — required for passphrase-only setup; see [docs/security.md](docs/security.md) |
+> | M5 8-character passphrase minimum | **Fixed** — 12 characters (`ValidatePassphraseStrength`) |
+> | L1 path traversal via remote keys | **Fixed** — sync paths that escape the base dir are skipped (`isWithin`) and download targets are checked with `filepath.Clean` + prefix test |
+> | L2 downloads written `0644` | **Fixed** — `0600` files, `0700` directories |
+> | L3 backups `0755`/`0644` | **Fixed** — `0700`/`0600` |
+> | L4 symlink detection | **Mostly moot** — `filepath.Walk` reports entries via `Lstat`, so symlinks inside synced directories are skipped as intended; a symlink given *directly* as a sync path is `Stat`ed and followed |
+> | L5 CI Go version mismatch | **Fixed** — CI uses Go 1.24, matching `go.mod` |
+>
+> The original report follows unchanged.
 
 # Security Audit Report: claude-sync
 

@@ -1,337 +1,295 @@
 # codex-sync
 
-Encrypted cross-device sync for OpenAI Codex local state. Continue a Codex
-conversation on another Mac; keep config, rules, skills and memories in step.
+[![CI](https://github.com/d-jiao/codex-sync/actions/workflows/ci.yml/badge.svg)](https://github.com/d-jiao/codex-sync/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
+Encrypted cross-device sync for [OpenAI Codex](https://github.com/openai/codex)
+local state. Start a conversation on one Mac, continue it on another; keep your
+config, rules, skills and memories in step.
+
+- **Your storage, your key.** Files are gzip-compressed and
+  [age](https://github.com/FiloSottile/age)-encrypted *before* they leave the
+  machine. The bucket (Cloudflare R2, S3, GCS, any S3-compatible service, or
+  WebDAV) only ever sees ciphertext.
+- **Merge, don't clobber.** Thread names and prompt history are unioned across
+  machines; a file changed on both sides becomes a conflict you resolve, never a
+  silent overwrite.
+- **Careful by default.** First pull offers a backup, removals go to a trash
+  directory, an empty bucket can never wipe your local files.
 
 codex-sync is a fork of [claude-sync](https://github.com/tawanorg/claude-sync)
-(MIT) adapted to sync `~/.codex` (or `$CODEX_HOME`) rather than claude-sync's
-own target directory. Files are gzip-compressed and age-encrypted before
-upload; storage is your own bucket (Cloudflare R2, S3, GCS, S3-compatible, or
-WebDAV).
+(MIT) with the sync engine kept and everything Codex-specific rebuilt — see
+[NOTICE](NOTICE). It is early software (v0.x): macOS, built from source, tested
+by its author on two Macs. Issues and pull requests are welcome.
 
-## Quick start
+## Contents
 
-    make build && make install          # installs ~/.local/bin/codex-sync
-    codex-sync init                     # provider, bucket, passphrase, scope
-    codex-sync push                     # first machine
-    codex-sync init && codex-sync pull  # second machine, same passphrase
-    make install-launchd                # pull+push now, daily at 03:00 and at login
+- [How it works](#how-it-works)
+- [Install](#install)
+- [Set up](#set-up)
+- [Everyday use](#everyday-use)
+- [What gets synced](#what-gets-synced)
+- [How sync behaves](#how-sync-behaves)
+- [Seeing pulled threads in the desktop app](#seeing-pulled-threads-in-the-desktop-app)
+- [Troubleshooting](#troubleshooting)
+- [Security](#security)
+- [Limitations](#limitations)
+- [Contributing](#contributing)
+- [License](#license)
 
-Keep both Macs on the same Codex version: an older engine cannot list threads
-written by a newer one.
+## How it works
 
-## What gets synced
+Codex keeps everything that matters in plain files under `~/.codex` (or
+`$CODEX_HOME`): one JSONL "rollout" file per conversation, an index of thread
+names, your prompt history, `config.toml`, rules, skills and memories. Its
+SQLite databases are derived from those files and are rebuilt on startup.
 
-| Path (under ~/.codex) | Scope | Notes |
-|---|---|---|
-| `sessions/`, `archived_sessions/` | sessions | conversations (rollout files; the source of truth) |
-| `session_index.jsonl` | sessions | thread names — merged, never overwritten |
-| `history.jsonl` | sessions | prompt history — merged, never overwritten |
-| `attachments/` | sessions | files you attached to threads |
-| `config.toml` | full | providers, MCP servers, project trust |
-| `rules/`, `skills/`, `memories/`, `AGENTS.md` | full | |
+codex-sync treats the files as the source of truth:
 
-Never synced: `auth.json`, `installation_id`, every `*.sqlite`/`*.db`, `plugins/`,
-`packages/`, `cache/`, logs, worktrees and other runtime state. Codex rebuilds
-its databases from the rollout files.
+1. **`push`** encrypts every file that changed since the last sync and uploads
+   it to your bucket; files you deleted locally are deleted remotely.
+2. **`pull`** downloads what changed remotely, merges the two shared index
+   files, saves both-sides-changed files as conflict sidecars, and moves files
+   that vanished from the remote to a trash directory.
+3. A small state file (`~/.codex-sync/state.json`) remembers each file's hash so
+   both commands only touch what changed.
 
-### Sync scope
+Two things to know up front:
 
-`init` asks whether to sync everything or just conversation data; set it
-directly with `--scope full` or `--scope sessions`:
+- **Keep every machine on the same Codex version.** An older engine silently
+  hides threads written by a newer one.
+- **The ChatGPT desktop app does not notice pulled threads on its own.** Run
+  `codex-sync pull --desktop` (with the app quit) — see
+  [below](#seeing-pulled-threads-in-the-desktop-app).
 
-| Scope | Syncs | Use when |
-|---|---|---|
-| `full` (default) | everything in the table above | you want config, rules, skills and memories mirrored too |
-| `sessions` | `sessions/`, `archived_sessions/`, `session_index.jsonl`, `history.jsonl`, `attachments/` only | you just want conversations to continue across machines |
+## Install
 
-The scope is saved in `~/.codex-sync/config.yaml` and applies to every
-`push`/`pull`; it is also a ceiling on `codex-sync paths add` — a path outside
-the current scope is rejected rather than silently widening it.
-
-## How pull behaves
-
-- New and changed remote files are downloaded; a file changed on both sides is
-  kept locally and the remote copy saved as `<file>.conflict.<timestamp>`
-  (`codex-sync conflicts` resolves them). Sidecars are local only: they are
-  never uploaded, tracked or removed by a later pull.
-- `session_index.jsonl` and `history.jsonl` are unioned with your local copy.
-- A file that vanished from the remote (deleted or archived on the other Mac) is
-  moved to `~/.codex-sync/trash/<timestamp>/` when unchanged locally; changed
-  files stay. `codex-sync pull --no-delete` disables this; `--dry-run` previews it.
-  The trash grows with every removal and nothing references it, so old batches
-  are safe to delete.
-- An empty remote never removes anything.
-
-## Showing pulled threads in the Codex desktop app
-
-The ChatGPT desktop app keeps its own thread catalog and fills it incrementally:
-after a one-time full build it only looks at threads newer than the last one it
-saw, so a thread that arrives via sync — whose timestamps are older — never
-appears in its sidebar on its own. Quit the ChatGPT app, then either pull with
-the refresh built in or run the refresh alone:
+Requirements: macOS, [Go](https://go.dev/dl/) 1.24 or newer, and a bucket at
+one of the supported providers (next section). There are no pre-built binaries
+or packages yet.
 
 ```bash
-codex-sync pull --desktop      # pull, then refresh the desktop app
-codex-sync desktop refresh     # refresh only (after an earlier pull)
+git clone https://github.com/d-jiao/codex-sync
+cd codex-sync
+make build && make install    # installs ~/.local/bin/codex-sync (override with INSTALL_DIR=...)
+codex-sync --version
 ```
 
-The refresh backs up the Codex databases to `~/.codex-sync/db-backup-<timestamp>/`,
-has the app's own engine index the new rollouts, copies thread names from the
-synced `session_index.jsonl` into the engine database (`--no-names` skips this),
-and schedules the app's full catalog sweep for its next launch. Relaunch the app
-and the pulled threads show up, named. It refuses to run while the ChatGPT app or
-any `codex` process is open (they hold the databases; a `codex` running from a
-path containing spaces is not detected) — `pull --desktop` still completes the
-pull, then reports the running app and exits non-zero, so `pull --desktop && push`
-stops there; quit the app and run `codex-sync desktop refresh`. The refresh is
-safe to run repeatedly. The engine used is the ChatGPT app's bundled one
-(`--codex-bin` / `$CODEX_BIN` override it; a different engine version may migrate
-every Codex database, which is why all of them are backed up, except the
-engine's log store). Backups accumulate — every run writes a full copy of the
-databases, well over 100 MB with a large history — and nothing references them,
-so old `db-backup-*` directories are safe to delete.
+Make sure `~/.local/bin` is on your `PATH`.
 
-## How push behaves
+## Set up
 
-Push uploads files whose content changed since the last sync and deletes the
-remote copies of files removed locally. A file that still has a live
-`.conflict.*` sidecar is skipped and reported as an error until you resolve it
-with `codex-sync conflicts`; the sidecar itself is never uploaded.
+### 1. Pick a storage provider
 
-## Limitations (v1)
-
-- Pulled threads do not appear in the ChatGPT desktop app, and carry no name in
-  the CLI, until `codex-sync desktop refresh` (or `pull --desktop`) runs with the
-  app quit; Codex itself never re-reads the synced index or rescans older rollouts.
-- Do not resume the same thread on two Macs between syncs; you would get a
-  conflict sidecar instead of a merged transcript.
-- Project organization, automations and the memories database live only in
-  SQLite and are not synced.
-- macOS only; no npm package — build from source.
-
-## Security
-
-Same model as claude-sync: gzip → age (X25519/ChaCha20-Poly1305); passphrase
-keys derived with Argon2id and the fixed salt `sha256("codex-sync-v1")` (so the
-same passphrase gives the same key on every device, and a different key than
-claude-sync). Config and keys are stored 0600 under `~/.codex-sync/`.
-
-## Setup Guide
-
-### Step 1: Choose a Storage Provider
-
-| Provider | Free Tier | Best For |
-|----------|-----------|----------|
-| **Cloudflare R2** | 10GB storage | Personal use (recommended) |
-| **AWS S3** | 5GB (12 months) | AWS users |
-| **Google Cloud Storage** | 5GB | GCP users |
+| Provider | Free tier | Best for |
+|---|---|---|
+| **Cloudflare R2** (recommended) | 10 GB storage, 1M writes, 10M reads/month, no egress fees | personal use |
+| **AWS S3** | 5 GB for 12 months, then ~$0.023/GB | AWS users |
+| **Google Cloud Storage** | 5 GB, 5K writes, 50K reads/month | GCP users |
 | **S3-compatible** | varies | Backblaze B2, MinIO, Wasabi, DigitalOcean Spaces, self-hosted |
-| **WebDAV** | Self-hosted (unlimited) | Nextcloud/ownCloud users |
+| **WebDAV** | your own server | Nextcloud / ownCloud users |
 
-### Step 2: Create a Bucket
+Storage needs scale with your conversation history: `sessions/` and
+`archived_sessions/` range from a few MB to a few hundred MB on a long-lived
+install, which fits in every free tier above.
+
+### 2. Create a bucket and credentials
 
 <details>
-<summary><b>Cloudflare R2</b> (recommended)</summary>
+<summary><b>Cloudflare R2</b></summary>
 
-1. Go to [Cloudflare Dashboard](https://dash.cloudflare.com/) → R2 Object Storage
-2. Click "Create bucket" → name it `codex-sync`
-3. Go to "Manage R2 API Tokens" → "Create API Token"
-4. Select **Object Read & Write** permission → Create
+1. [Cloudflare Dashboard](https://dash.cloudflare.com/) → R2 Object Storage → **Create bucket** (e.g. `codex-sync`)
+2. **Manage R2 API Tokens** → **Create API Token** with **Object Read & Write** permission
 
-You'll need: Account ID, Access Key ID, Secret Access Key
+You'll need: Account ID, Access Key ID, Secret Access Key.
 </details>
 
 <details>
 <summary><b>AWS S3</b></summary>
 
-1. Go to [S3 Console](https://s3.console.aws.amazon.com/s3/bucket/create) → Create bucket
-2. Go to [IAM Security Credentials](https://console.aws.amazon.com/iam/home#/security_credentials)
-3. Create Access Keys
+1. [S3 Console](https://s3.console.aws.amazon.com/s3/bucket/create) → Create bucket
+2. [IAM Security Credentials](https://console.aws.amazon.com/iam/home#/security_credentials) → Create access keys
 
-You'll need: Access Key ID, Secret Access Key, Region
+You'll need: Access Key ID, Secret Access Key, Region.
 </details>
 
 <details>
 <summary><b>Google Cloud Storage</b></summary>
 
-1. Go to [Cloud Storage](https://console.cloud.google.com/storage/create-bucket) → Create bucket
-2. Go to [Service Accounts](https://console.cloud.google.com/iam-admin/serviceaccounts) → Create service account
-3. Grant "Storage Object Admin" role → Create JSON key
+1. [Cloud Storage](https://console.cloud.google.com/storage/create-bucket) → Create bucket
+2. [Service Accounts](https://console.cloud.google.com/iam-admin/serviceaccounts) → Create service account with the **Storage Object Admin** role → Create JSON key
 
-You'll need: Project ID, Service Account JSON file (or use `gcloud auth application-default login`)
+You'll need: Project ID and the service-account JSON file (or run `gcloud auth application-default login`).
 </details>
 
 <details>
-<summary><b>S3-compatible</b> (Backblaze B2, MinIO, Wasabi, DigitalOcean Spaces, ...)</summary>
+<summary><b>S3-compatible</b> (Backblaze B2, MinIO, Wasabi, DigitalOcean Spaces, …)</summary>
 
-Any provider exposing an S3-compatible API works through the **S3-compatible (custom endpoint)** option. Create a bucket and an application key with your provider, then supply its S3 endpoint URL.
-
-Example (Backblaze B2):
+Any provider with an S3-compatible API works through the **S3-compatible
+(custom endpoint)** option. Create a bucket and an application key with your
+provider, then pass its S3 endpoint URL:
 
 ```bash
 codex-sync init --provider s3-compatible --endpoint https://s3.us-west-004.backblazeb2.com
 ```
 
-You'll need: Endpoint URL, Access Key ID, Secret Access Key, Bucket. The signing region is auto-detected from the endpoint (e.g. `us-west-004`); for providers that ignore it, `auto` is used.
+You'll need: Endpoint URL, Access Key ID, Secret Access Key, Bucket. The signing
+region is auto-detected from the endpoint (e.g. `us-west-004`); providers that
+ignore it get `auto`.
 
-For servers that don't resolve buckets as subdomains (e.g. Ceph RGW, or MinIO without wildcard DNS), add `--use-path-style` to address objects as `endpoint/bucket/key` instead of `bucket.endpoint/key`:
+For servers that don't resolve buckets as subdomains (Ceph RGW, MinIO without
+wildcard DNS), add `--use-path-style` to address objects as
+`endpoint/bucket/key` instead of `bucket.endpoint/key`:
 
 ```bash
 codex-sync init --provider s3-compatible --endpoint https://ceph.example.com --use-path-style
 ```
 
-It's off by default and unnecessary for Backblaze B2, Wasabi, and DigitalOcean Spaces, which all support virtual-hosted addressing.
-
-> Custom endpoints automatically relax the AWS SDK's default integrity-checksum headers, which some S3-compatible providers reject. AWS S3 behavior is unchanged.
+It is off by default and not needed for Backblaze B2, Wasabi or DigitalOcean
+Spaces. Custom endpoints also relax the AWS SDK's default integrity-checksum
+headers, which some providers reject; AWS S3 itself is unaffected.
 </details>
 
 <details>
-<summary><b>WebDAV (Nextcloud, ownCloud, etc.)</b></summary>
+<summary><b>WebDAV</b> (Nextcloud, ownCloud, …)</summary>
 
-No bucket to create — just point at your existing WebDAV server.
+No bucket to create — point at your existing server.
 
-1. **Nextcloud**: Go to Settings → Security → Devices & sessions → Create app password
+1. Nextcloud: Settings → Security → Devices & sessions → **Create app password**
 2. Note your WebDAV URL: `https://your-server/remote.php/dav/files/USERNAME/`
 
-You'll need: WebDAV URL, Username, App password
-
-The wizard will create a `codex-sync` subdirectory automatically.
+You'll need: WebDAV URL, Username, App password. The wizard creates a
+`codex-sync` subdirectory for you.
 </details>
 
-### Step 3: Run Init
+### 3. Initialize on the first machine
 
 ```bash
 codex-sync init
 ```
 
-The interactive wizard will guide you through:
+The wizard walks you through:
 
-1. **Select storage provider** (R2, S3, GCS, S3-compatible, or WebDAV)
-2. **Enter credentials** (provider-specific)
-3. **Choose encryption method**:
-   - **Passphrase** (recommended) - same passphrase on all devices = same key
-   - **Random key** - must copy `~/.codex-sync/age-key.txt` to other devices
-4. **Test the connection** to verify everything works
-5. **Choose a sync scope** (`full` or `sessions`, unless `--scope` was given)
+1. **Storage provider** and its credentials (all of them can also be passed as
+   flags — see `codex-sync init --help`).
+2. **Encryption key.** *Passphrase* (recommended, at least 12 characters):
+   the same passphrase produces the same key on every machine, so there is
+   nothing to copy around. *Random key*: no passphrase to remember, but you
+   must copy `~/.codex-sync/age-key.txt` to each machine yourself.
+3. **Connection test** against the bucket.
+4. **Sync scope** — `full` (everything in the table under
+   [What gets synced](#what-gets-synced)) or `sessions` (conversations only).
+   Skip the question with `--scope full` or `--scope sessions`.
 
-### Step 4: Push and Pull
+Then upload:
 
 ```bash
-# Upload local changes
 codex-sync push
+```
 
-# Download remote changes
+### 4. Initialize on the other machine
+
+Run `codex-sync init` with the **same passphrase**, then pull:
+
+```bash
+codex-sync init
+codex-sync pull --dry-run   # optional: preview
 codex-sync pull
 ```
 
-## Commands
+`init` verifies the passphrase by decrypting a file from the bucket before it
+finishes, so a typo is caught here rather than on pull. If this machine already
+has files in `~/.codex`, pull shows what would change and offers to back them
+up to `~/.codex.backup.<timestamp>` first — see
+[First pull onto a machine that already has files](#first-pull-onto-a-machine-that-already-has-files).
+
+### 5. Optional: sync daily with launchd
 
 ```bash
-codex-sync init         # Set up configuration (interactive wizard)
-codex-sync push         # Upload local changes to cloud storage
-codex-sync pull         # Download remote changes from cloud storage
-codex-sync desktop refresh  # Make pulled threads visible in the ChatGPT desktop app
-codex-sync status       # Show pending local changes
-codex-sync diff         # Show differences between local and remote
-codex-sync conflicts    # List and resolve conflicts
-codex-sync paths        # Manage sync paths and exclude filters
-codex-sync reset        # Remove local config, key and sync state (keeps trash/)
-codex-sync update       # Update to latest version (verifies release checksums)
-codex-sync changelog    # Show release history
-codex-sync --help       # Show all commands
+make install-launchd     # installs the binary, then the agent
+make uninstall-launchd   # removes the agent
 ```
 
-### Pull Options
+This registers a per-user launchd agent
+(`~/Library/LaunchAgents/com.codex-sync.daily.plist`) that runs
+`codex-sync pull -q && codex-sync push -q` right away, then daily at 03:00 and
+at every login. Output goes to `~/Library/Logs/codex-sync.log`; when a file
+fails, the job exits non-zero and the log says which file and why.
+
+launchd jobs do not see your shell environment. If you use a custom Codex home,
+run `CODEX_HOME=/path/to/home make install-launchd` — the value is baked into
+the agent at install time (re-run the target to change it). There is no
+scheduler built into the CLI itself.
+
+## Everyday use
 
 ```bash
-codex-sync pull                  # Normal pull (prompts if existing files)
-codex-sync pull --dry-run        # Preview what would change
-codex-sync pull --force          # Skip confirmation prompts
-codex-sync pull --no-delete      # Never remove local files that vanished from the remote
+codex-sync push               # upload local changes
+codex-sync pull               # download remote changes
+codex-sync pull --desktop     # …and make new threads visible in the ChatGPT app (quit it first)
+codex-sync status             # what push would upload
+codex-sync diff               # local vs remote
+codex-sync conflicts          # list and resolve conflicts
 ```
 
-### Init Options
+| Command | What it does |
+|---|---|
+| `init` | Set up storage, key and scope (interactive wizard) |
+| `push` | Upload local changes; delete remote copies of files removed locally |
+| `pull` | Download remote changes; merge, conflict or trash as described below |
+| `desktop refresh` | Make pulled threads visible in the ChatGPT desktop app |
+| `status` | Show pending local changes |
+| `diff` | Show differences between local and remote |
+| `conflicts` | List and resolve `.conflict.*` sidecars |
+| `paths` | Manage sync paths and exclude filters |
+| `reset` | Remove local config, key and sync state (keeps `trash/`) |
+| `update` | Update to the latest release (verifies `checksums.txt`) |
+| `changelog` | Show release history |
+
+Every command takes `-q` / `--quiet` for scripts. Errors are still printed to
+stderr, and a push or pull with any failed file exits non-zero, so
+`pull -q && push -q` stops at the first problem.
+
+### Useful flags
 
 ```bash
-codex-sync init                   # Full setup wizard
-codex-sync init --passphrase      # Re-enter passphrase only (keeps storage config)
-codex-sync init --force           # Reset everything, start fresh
-codex-sync init --scope sessions  # Sync conversation data only
-```
+codex-sync pull --dry-run         # preview downloads, merges, conflicts and removals
+codex-sync pull --force           # skip the first-pull confirmation prompt
+codex-sync pull --no-delete       # never move local files to the trash
+codex-sync pull --desktop         # refresh the desktop app after a successful pull
 
-### Managing Sync Paths
+codex-sync init --passphrase      # re-enter the passphrase only (keeps storage config)
+codex-sync init --force           # start over: overwrite config and key
+codex-sync init --scope sessions  # conversations only
 
-```bash
-codex-sync paths                    # List sync paths and exclude filters
-codex-sync paths add <path>         # Add a path under ~/.codex to the sync list
-codex-sync paths remove <path>      # Remove a path from the sync list
-codex-sync paths exclude <glob>     # Skip a glob pattern inside a synced directory
-codex-sync paths unexclude <glob>   # Remove a glob filter
-codex-sync paths reset              # Restore default sync paths and clear excludes
-```
+codex-sync conflicts --list       # just list
+codex-sync conflicts --keep local | remote   # resolve all one way
 
-### Quiet Mode
-
-```bash
-codex-sync push -q     # No output (for scripts)
-codex-sync pull -q
-```
-
-Errors are still printed to stderr in quiet mode, and a push or pull with any
-failed file exits non-zero, so `pull -q && push -q` stops at the first problem.
-
-### Reset
-
-```bash
-codex-sync reset            # Remove ~/.codex-sync/config.yaml, age-key.txt and state.json
-codex-sync reset --remote   # Also delete every file in the bucket
-codex-sync reset --local    # Kept for compatibility: a plain reset already clears the sync state
+codex-sync reset                  # remove config.yaml, age-key.txt, state.json
+codex-sync reset --remote         # …and delete every object in the bucket
 ```
 
 `reset` never touches `~/.codex` and never touches `~/.codex-sync/trash/`, so
 files an earlier pull removed stay recoverable. Run `codex-sync init` afterwards
 to set up again.
 
-### Check for Updates
+`update` and `changelog` read this repository's GitHub Releases. Until the first
+release exists they print a build-from-source hint
+(`git pull && make build && make install`) instead of failing.
+
+### Choosing what to sync
 
 ```bash
-codex-sync update --check   # Check without installing
-codex-sync update           # Download and install latest version
+codex-sync paths                    # list sync paths and exclude filters
+codex-sync paths add <path>         # add a path under ~/.codex
+codex-sync paths remove <path>      # stop syncing a path
+codex-sync paths exclude <glob>     # skip a glob pattern inside a synced directory
+codex-sync paths unexclude <glob>   # remove a glob filter
+codex-sync paths reset              # back to the defaults
 ```
 
-There are no published releases yet; both commands print a build-from-source
-hint (`git pull && make build && make install`) until the first one exists.
-
-### Changelog
-
-```bash
-codex-sync changelog            # Show recent releases
-codex-sync changelog --limit 5  # Show last 5 releases
-```
-
-## Automatic Sync (launchd)
-
-```bash
-make install-launchd     # installs the binary, then the daily agent
-make uninstall-launchd   # removes it
-```
-
-This installs a per-user launchd agent
-(`~/Library/LaunchAgents/com.codex-sync.daily.plist`) that runs
-`codex-sync pull -q && codex-sync push -q`. The job runs immediately when
-installed (`RunAtLoad`), then daily at 03:00 and at every login. Output goes to
-`~/Library/Logs/codex-sync.log`; a failed file makes the job exit non-zero, and
-the log says which file and why.
-
-launchd jobs do not see your shell environment. If you use a custom Codex home,
-run `CODEX_HOME=/path/to/home make install-launchd` — the value is baked into
-the agent at install time (re-run the target to change it). macOS only; there
-is no built-in scheduler in the CLI itself.
-
-## Exclude Patterns
-
-Skip specific files or directories during sync by adding exclude patterns to your config (`~/.codex-sync/config.yaml`):
+Excludes are globs matched against paths relative to `~/.codex` and can also be
+edited directly in `~/.codex-sync/config.yaml`:
 
 ```yaml
 exclude:
@@ -340,126 +298,202 @@ exclude:
   - "skills/**/node_modules/**"
 ```
 
-Patterns use glob syntax and are matched against paths relative to `~/.codex`.
+The scope chosen at `init` is a ceiling: under `sessions` scope, `paths add`
+rejects a path outside the conversation set rather than silently widening it.
 
-## Acceptance check
+## What gets synced
 
-`integration/codex_listing_check.py` compares the user-visible threads reported
-by a real Codex engine binary (the `app-server` protocol) across two
-`$CODEX_HOME` directories — a source home and a synced copy — across every
-model provider configured in the source home. It needs a local Codex engine
-binary, is run manually, and is not part of `make check`.
+| Path (under `~/.codex`) | Scope | Notes |
+|---|---|---|
+| `sessions/`, `archived_sessions/` | sessions | conversations (rollout files; the source of truth) |
+| `session_index.jsonl` | sessions | thread names — merged, never overwritten |
+| `history.jsonl` | sessions | prompt history — merged, never overwritten |
+| `attachments/` | sessions | files you attached to threads |
+| `config.toml` | full | providers, MCP servers, project trust |
+| `rules/`, `skills/`, `memories/`, `AGENTS.md` | full | |
 
-Run it against copies (or APFS clones) of the homes, never the live `~/.codex`:
-the engine writes state into whichever home it is given.
+| Scope | Syncs | Use when |
+|---|---|---|
+| `full` (default) | everything in the table above | you want config, rules, skills and memories mirrored too |
+| `sessions` | the rows marked *sessions* only | you just want conversations to continue across machines |
+
+**Never synced**, even if you add a parent directory to the sync paths:
+`auth.json` and `installation_id` (your login and device identity), every
+`*.sqlite*` / `*.db*` file (Codex rebuilds them from the rollout files),
+`plugins/`, `packages/`, `cache/`, logs, worktrees and other runtime state, and
+`*.conflict.*` sidecars.
+
+Home directories are portable: `cwd` fields inside rollout, history and index
+files, and paths in `config.toml` / `AGENTS.md`, are rewritten to a `${HOME}`
+token on upload and resolved back on pull, so two machines with different
+usernames still work.
+
+## How sync behaves
+
+### Push
+
+Uploads files whose content changed since the last sync and deletes the remote
+copies of files removed locally. A file that still has a live `.conflict.*`
+sidecar is skipped and reported as an error until you resolve it with
+`codex-sync conflicts`; the sidecar itself is never uploaded.
+
+### Pull
+
+- **New and changed remote files are downloaded.**
+- **Both sides changed → conflict.** The local file is kept and the remote copy
+  is saved next to it as `<file>.conflict.<timestamp>`. Sidecars are local
+  only: never uploaded, tracked, or removed by a later pull.
+- **`session_index.jsonl` and `history.jsonl` are merged**, not conflicted: the
+  remote and local copies are unioned (by thread id, latest `updated_at` wins;
+  by distinct line ordered by `ts`), written back locally, and pushed as the
+  union next time. Both machines converge byte-for-byte.
+- **Files that vanished from the remote** (deleted or archived on the other
+  machine) are moved to `~/.codex-sync/trash/<timestamp>/` — but only when
+  unchanged locally since the last sync. Locally modified files stay put and
+  are reported. `--no-delete` disables this, `--dry-run` previews it. Nothing
+  references the trash, so old batches are safe to delete.
+- **An empty remote never removes anything.**
+
+### Conflicts
 
 ```bash
-integration/codex_listing_check.py --source /path/to/copy-of-home \
-    --synced /path/to/copy-of-other-home \
-    [--codex-bin /Applications/ChatGPT.app/Contents/Resources/codex]
+codex-sync conflicts                # interactive
+codex-sync conflicts --list         # just list
+codex-sync conflicts --keep local   # keep every local version
+codex-sync conflicts --keep remote  # keep every remote version
 ```
 
-It exits 2 with `codex engine binary not found` when the engine cannot be
-started (set `--codex-bin` or `CODEX_BIN`).
+Interactive keys: **l** keep local, **r** keep remote, **d** show diff,
+**s** skip, **q** quit. Resolving a conflict removes the sidecar; the next push
+publishes whichever version you kept.
 
-## Passphrase Issues
+### First pull onto a machine that already has files
 
-### Wrong passphrase on a new device
+When `~/.codex` already has content, pull:
 
-If you entered the wrong passphrase on a new device:
+1. shows what would be overwritten, kept, merged or downloaded;
+2. asks whether to **back up**, **overwrite** or **abort**;
+3. on *back up*, copies the existing files to `~/.codex.backup.<timestamp>` first.
+
+`pull --dry-run` shows the preview without changing anything; `pull --force`
+skips the prompt (for scripts).
+
+## Seeing pulled threads in the desktop app
+
+**Why this step exists.** The ChatGPT desktop app keeps its own thread catalog.
+After a one-time full build it only looks at threads newer than the last one it
+saw, so a thread that arrives via sync — whose timestamps are older — never
+appears in the sidebar on its own. Codex itself never re-reads the synced
+index either, so pulled threads also show up unnamed in the CLI.
+
+**What to do.** Quit the ChatGPT app, then either:
 
 ```bash
-# Re-enter passphrase (keeps your storage config)
+codex-sync pull --desktop      # pull, then refresh
+codex-sync desktop refresh     # refresh only, after an earlier pull
+```
+
+Relaunch the app and the pulled threads appear, with their names.
+
+**What the refresh does**, in order:
+
+1. Backs up the Codex databases and `session_index.jsonl` to
+   `~/.codex-sync/db-backup-<timestamp>/` (`--no-backup` skips this).
+2. Runs the app's own engine once so it indexes every rollout on disk.
+3. Copies thread names from the synced `session_index.jsonl` into the engine
+   database for threads that have none (`--no-names` skips this).
+4. Schedules the app's full catalog sweep for its next launch.
+
+**Good to know:**
+
+- It refuses to run while the ChatGPT app or any `codex` process is open, since
+  they hold the databases. (A `codex` started from a path containing spaces is
+  not detected.) `pull --desktop` still completes the pull in that case, then
+  reports the running app and exits non-zero — so `pull --desktop && push`
+  stops there; quit the app and run `codex-sync desktop refresh`.
+- It is safe to run repeatedly.
+- The engine used is the ChatGPT app's bundled one; `--codex-bin` or
+  `$CODEX_BIN` override it. A different engine version may migrate every Codex
+  database, which is why all of them are backed up (except the engine's log
+  store).
+- Backups accumulate — each run writes a full copy, well over 100 MB with a
+  large history — and nothing references them, so old `db-backup-*`
+  directories are safe to delete.
+
+## Troubleshooting
+
+**Wrong passphrase on a new machine.** `init` verifies the passphrase against
+the bucket and offers to retry; afterwards, re-enter it without redoing the
+storage setup:
+
+```bash
 codex-sync init --passphrase
 ```
 
-The init will verify your passphrase can decrypt remote files before completing.
-
-### Forgot your passphrase
-
-The passphrase is **never stored**. If you forget it:
-
-1. Your encrypted files cannot be recovered
-2. Reset and start fresh:
+**Forgot the passphrase.** It is never stored anywhere, and the encrypted
+files cannot be recovered without it. Start over:
 
 ```bash
-codex-sync reset --remote   # Delete remote files and local config/key/state (trash/ kept)
-codex-sync init             # Set up again with new passphrase
-codex-sync push             # Re-upload from this device
+codex-sync reset --remote   # delete remote files and local config/key/state (trash/ kept)
+codex-sync init             # set up again with a new passphrase
+codex-sync push             # re-upload from this machine
 ```
 
-## Conflict Resolution
+**A thread I continued on both Macs came back as a conflict.** Expected: two
+machines appended to the same rollout file between syncs. Pick a side with
+`codex-sync conflicts`; the other transcript is in the sidecar. Avoid resuming
+the same thread on two machines between syncs.
 
-When both local and remote files change, the remote version is saved as `.conflict`:
+**Pulled threads are missing from the desktop app.** See
+[Seeing pulled threads in the desktop app](#seeing-pulled-threads-in-the-desktop-app).
+If `desktop refresh` says the app is running, quit it (and any `codex` process)
+and run it again.
 
-```bash
-codex-sync conflicts            # Interactive resolution
-codex-sync conflicts --list     # Just list conflicts
-codex-sync conflicts --keep local   # Keep all local versions
-codex-sync conflicts --keep remote  # Keep all remote versions
-```
+**The launchd job stopped syncing.** Check `~/Library/Logs/codex-sync.log`;
+the last lines name the file that failed and why. An unresolved conflict makes
+push fail until you run `codex-sync conflicts`.
 
-Interactive options:
-- **[l]** Keep local (delete conflict file)
-- **[r]** Keep remote (replace local)
-- **[d]** Show diff
-- **[s]** Skip
-- **[q]** Quit
+**Getting back a file that pull removed.** Look in
+`~/.codex-sync/trash/<timestamp>/`; files keep their relative path.
 
-`session_index.jsonl` and `history.jsonl` never produce conflicts — they are
-merged instead (see "How pull behaves").
+## Security
 
-## Pulling with Existing Files
+Same model as claude-sync: gzip → age (X25519 / ChaCha20-Poly1305), encrypted
+locally before upload, so the storage provider only sees ciphertext and
+filenames. Passphrase keys are derived with Argon2id and the fixed salt
+`sha256("codex-sync-v1")`, so the same passphrase gives the same key on every
+machine — and a different key than claude-sync would derive. Config, key and
+state live in `~/.codex-sync/` with `0600`/`0700` permissions; note that the
+storage credentials in `config.yaml` are stored in plaintext there.
 
-When you pull on a device that already has `~/.codex` files, codex-sync will:
+Details, threat model and the inherited audit: [docs/security.md](docs/security.md)
+and [SECURITY-AUDIT.md](SECURITY-AUDIT.md). To report a vulnerability, see
+[SECURITY.md](SECURITY.md).
 
-1. **Show what would change** - files that would be overwritten, kept, merged, or downloaded
-2. **Ask for confirmation** - choose to back up, overwrite, or abort
-3. **Create a backup** - saves existing files to `~/.codex.backup.<timestamp>`
+## Limitations
 
-```bash
-# Preview first
-codex-sync pull --dry-run
+- Pulled threads do not appear in the ChatGPT desktop app, and carry no name in
+  the CLI, until `codex-sync desktop refresh` (or `pull --desktop`) runs with
+  the app quit.
+- Do not resume the same thread on two machines between syncs; you get a
+  conflict sidecar instead of a merged transcript.
+- Project organization, automations and the memories database live only in
+  SQLite and are not synced.
+- macOS only for now: the desktop refresh and the launchd scheduler are
+  macOS-specific, and the sync commands are untested elsewhere.
+- No pre-built binaries or packages yet — build from source.
 
-# Pull with prompts
-codex-sync pull
+## Contributing
 
-# Skip prompts (for scripts)
-codex-sync pull --force
-```
-
-## Cost
-
-Storage cost depends on how much conversation history you keep — `sessions/`
-and `archived_sessions/` scale with usage and can range from a few MB to
-several hundred MB on a long-lived install. Even so, it's inexpensive on any
-provider:
-
-| Provider | Free Tier |
-|----------|-----------|
-| **Cloudflare R2** | 10GB storage, 1M writes, 10M reads/month |
-| **AWS S3** | 5GB for 12 months (then ~$0.023/GB) |
-| **Google Cloud Storage** | 5GB, 5K writes, 50K reads/month |
-| **WebDAV** | Self-hosted — no limits, no cost beyond your own server |
-
-## Build from Source
-
-**Prerequisite:** Go 1.24+
+Bug reports, questions and pull requests are welcome. See
+[CONTRIBUTING.md](CONTRIBUTING.md) for the build/test workflow and
+[CLAUDE.md](CLAUDE.md) for an architecture tour; the design rationale is in
+[docs/specs/2026-09-15-codex-sync-design.md](docs/specs/2026-09-15-codex-sync-design.md).
 
 ```bash
-git clone https://github.com/d-jiao/codex-sync
-cd codex-sync
-make build && make install   # installs ~/.local/bin/codex-sync
-codex-sync --version
-```
-
-## Development
-
-```bash
-make test          # Run tests
-make fmt            # Format code
-make check           # Run all pre-commit checks
-make setup-hooks      # Enable git pre-commit hooks
+make test          # run the tests
+make check         # gofmt, go vet, go test -short (what the pre-commit hook runs)
+make setup-hooks   # install the pre-commit hook
 ```
 
 ## License
