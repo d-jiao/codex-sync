@@ -32,7 +32,7 @@ func ResetCatalog(baseDir string) (CatalogReport, error) {
 	if err != nil {
 		return CatalogReport{}, err
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	cols, err := tableColumns(db, "local_thread_catalog_sync_state")
 	if err != nil {
@@ -45,7 +45,11 @@ func ResetCatalog(baseDir string) (CatalogReport, error) {
 	if err != nil {
 		return CatalogReport{}, err
 	}
-	if n, _ := res.RowsAffected(); n == 0 {
+	n, err := res.RowsAffected()
+	if err != nil {
+		return CatalogReport{}, err
+	}
+	if n == 0 {
 		return CatalogReport{Note: "desktop catalog has no local host row yet — it will build itself on first launch"}, nil
 	}
 	return CatalogReport{Reset: true}, nil

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -118,5 +119,44 @@ func TestRefreshSurfacesEngineFailure(t *testing.T) {
 	_, err := Refresh(context.Background(), Options{BaseDir: base, BackupRoot: t.TempDir(), EngineBin: bin, Processes: noProcesses})
 	if err == nil {
 		t.Fatal("expected the engine failure to be reported")
+	}
+}
+
+func TestParseProcessLinesDropsSelfAndBlanks(t *testing.T) {
+	out := "7420 /Applications/ChatGPT.app/Contents/MacOS/ChatGPT\n\n9999 codex-sync desktop refresh\n85620 /Applications/ChatGPT.app/Contents/Resources/codex app-server --stdio\n"
+	got := parseProcessLines(out, 9999)
+	want := []string{
+		"7420 /Applications/ChatGPT.app/Contents/MacOS/ChatGPT",
+		"85620 /Applications/ChatGPT.app/Contents/Resources/codex app-server --stdio",
+	}
+	if strings.Join(got, "|") != strings.Join(want, "|") {
+		t.Errorf("parseProcessLines = %q, want %q", got, want)
+	}
+}
+
+func TestProcessPatternMatchesHoldersOfTheDatabases(t *testing.T) {
+	re := regexp.MustCompile(processPattern)
+	for _, line := range []string{
+		"/Applications/ChatGPT.app/Contents/MacOS/ChatGPT",
+		"/Applications/ChatGPT.app/Contents/Resources/codex -c features.code_mode_host=true app-server --analytics-default-enabled",
+		"/Users/me/.local/bin/codex app-server --stdio",
+		"codex",
+		"codex resume --last",
+		"/opt/homebrew/bin/codex exec 'hi'",
+	} {
+		if !re.MatchString(line) {
+			t.Errorf("pattern should match %q", line)
+		}
+	}
+	for _, line := range []string{
+		"codex-sync desktop refresh",
+		"/Users/me/.local/bin/codex-sync pull --desktop",
+		"sh -c 'echo /Applications/ChatGPT.app/Contents/Resources/codex app-server'",
+		"/Applications/ChatGPT.app/Contents/Frameworks/Codex Framework.framework/Helpers/Codex (Renderer)",
+		"python3 codex_listing_check.py",
+	} {
+		if re.MatchString(line) {
+			t.Errorf("pattern must not match %q", line)
+		}
 	}
 }

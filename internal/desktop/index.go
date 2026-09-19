@@ -2,21 +2,30 @@ package desktop
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
+	"strings"
 	"time"
 )
 
 // sourceKinds are the user-visible thread kinds; sub-agent threads are children.
 var sourceKinds = []string{"cli", "vscode", "exec", "appServer"}
 
-// requestTimeout bounds each app-server request; the first thread/list after a
-// large pull is where the engine indexes the new rollouts.
-const requestTimeout = 5 * time.Minute
+const (
+	// requestTimeout bounds each app-server request; the first thread/list after
+	// a large pull is where the engine indexes the new rollouts.
+	requestTimeout = 5 * time.Minute
+	// shutdownGrace is how long the engine gets to exit on its own after stdin
+	// closes, so it can finish deferred writes before it is killed.
+	shutdownGrace = 5 * time.Second
+	// stderrLimit caps how much engine stderr is kept for error messages.
+	stderrLimit = 8 * 1024
+)
 
 // Listed counts the user-visible threads the engine returned.
 type Listed struct {
@@ -27,36 +36,21 @@ type Listed struct {
 // IndexRollouts runs the engine once against baseDir and pages through
 // thread/list with useStateDbOnly=false, which is what makes the engine scan
 // sessions/ and archived_sessions/ and index rollouts it has not seen. The
-// engine is killed afterwards; its state lives in state_5.sqlite.
+// engine's state lives in state_5.sqlite; the process is shut down afterwards.
 func IndexRollouts(ctx context.Context, bin, baseDir string, providers []string) (Listed, error) {
 	var listed Listed
-	cmd := exec.CommandContext(ctx, bin, "app-server", "--stdio")
-	cmd.Env = append(os.Environ(), "CODEX_HOME="+baseDir)
-	stdin, err := cmd.StdinPipe()
+	eng, err := startEngine(ctx, bin, baseDir)
 	if err != nil {
 		return listed, err
 	}
-	stdout, err := cmd.StdoutPipe()
-	if err != nil {
-		return listed, err
-	}
-	if err := cmd.Start(); err != nil {
-		return listed, fmt.Errorf("start engine %s: %w", bin, err)
-	}
-	defer func() {
-		_ = cmd.Process.Kill()
-		_ = cmd.Wait()
-	}()
+	defer eng.shutdown()
 
-	c := &rpcClient{in: stdin, lines: make(chan []byte, 64)}
-	go c.pump(stdout)
-
-	if _, err := c.call(ctx, "initialize", map[string]any{
+	if _, err := eng.call(ctx, "initialize", map[string]any{
 		"clientInfo": map[string]string{"name": "codex-sync", "version": "0"},
 	}); err != nil {
 		return listed, err
 	}
-	if err := c.notify("initialized", map[string]any{}); err != nil {
+	if err := eng.notify("initialized", map[string]any{}); err != nil {
 		return listed, err
 	}
 	for _, archived := range []bool{false, true} {
@@ -72,7 +66,7 @@ func IndexRollouts(ctx context.Context, bin, baseDir string, providers []string)
 			if cursor != "" {
 				params["cursor"] = cursor
 			}
-			raw, err := c.call(ctx, "thread/list", params)
+			raw, err := eng.call(ctx, "thread/list", params)
 			if err != nil {
 				return listed, err
 			}
@@ -97,43 +91,110 @@ func IndexRollouts(ctx context.Context, bin, baseDir string, providers []string)
 	return listed, nil
 }
 
-// rpcClient is a minimal JSON-RPC-over-stdio client for the app-server protocol.
-type rpcClient struct {
-	in    interface{ Write([]byte) (int, error) }
-	lines chan []byte
-	next  int
+// engine is a running `codex app-server --stdio` spoken to over JSON-RPC.
+type engine struct {
+	cmd     *exec.Cmd
+	stdin   io.WriteCloser
+	stderr  *boundedBuffer
+	lines   chan []byte
+	pumpErr error // set before lines is closed
+	exited  chan struct{}
+	waitErr error // valid once exited is closed
+	next    int
 }
 
-func (c *rpcClient) pump(r interface{ Read([]byte) (int, error) }) {
+func startEngine(ctx context.Context, bin, baseDir string) (*engine, error) {
+	cmd := exec.CommandContext(ctx, bin, "app-server", "--stdio")
+	cmd.Env = append(os.Environ(), "CODEX_HOME="+baseDir)
+	stdin, err := cmd.StdinPipe()
+	if err != nil {
+		return nil, err
+	}
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return nil, err
+	}
+	e := &engine{cmd: cmd, stdin: stdin, stderr: &boundedBuffer{limit: stderrLimit},
+		lines: make(chan []byte, 64), exited: make(chan struct{})}
+	cmd.Stderr = e.stderr
+	if err := cmd.Start(); err != nil {
+		return nil, fmt.Errorf("start engine %s: %w", bin, err)
+	}
+	go e.pump(stdout)
+	go func() {
+		e.waitErr = cmd.Wait()
+		close(e.exited)
+	}()
+	return e, nil
+}
+
+// pump delivers stdout lines; on EOF or a scan error it records the error and
+// closes the channel.
+func (e *engine) pump(r io.Reader) {
 	sc := bufio.NewScanner(r)
 	sc.Buffer(make([]byte, 0, 64*1024), 64*1024*1024)
 	for sc.Scan() {
 		line := make([]byte, len(sc.Bytes()))
 		copy(line, sc.Bytes())
-		c.lines <- line
+		e.lines <- line
 	}
-	close(c.lines)
+	e.pumpErr = sc.Err()
+	close(e.lines)
 }
 
-func (c *rpcClient) send(msg map[string]any) error {
+// shutdown closes stdin so the engine can exit cleanly, then kills it if it
+// does not within shutdownGrace.
+func (e *engine) shutdown() {
+	_ = e.stdin.Close()
+	select {
+	case <-e.exited:
+	case <-time.After(shutdownGrace):
+		_ = e.cmd.Process.Kill()
+		<-e.exited
+	}
+}
+
+// exitReason describes why the engine stopped answering, with its exit status
+// and the tail of its stderr when available.
+func (e *engine) exitReason() string {
+	select {
+	case <-e.exited:
+	case <-time.After(2 * time.Second):
+		return "engine stopped answering"
+	}
+	msg := "engine exited"
+	if e.waitErr != nil {
+		msg += " (" + e.waitErr.Error() + ")"
+	}
+	if s := strings.TrimSpace(e.stderr.String()); s != "" {
+		msg += ": " + s
+	}
+	if e.pumpErr != nil {
+		msg += "; reading its output failed: " + e.pumpErr.Error()
+	}
+	return msg
+}
+
+func (e *engine) send(msg map[string]any) error {
 	b, err := json.Marshal(msg)
 	if err != nil {
 		return err
 	}
-	_, err = c.in.Write(append(b, '\n'))
+	_, err = e.stdin.Write(append(b, '\n'))
 	return err
 }
 
-func (c *rpcClient) notify(method string, params any) error {
-	return c.send(map[string]any{"method": method, "params": params})
+func (e *engine) notify(method string, params any) error {
+	return e.send(map[string]any{"method": method, "params": params})
 }
 
-// call sends a request and waits for the response carrying its id; other
-// messages (notifications, unrelated responses) are skipped.
-func (c *rpcClient) call(ctx context.Context, method string, params any) (json.RawMessage, error) {
-	c.next++
-	id := c.next
-	if err := c.send(map[string]any{"id": id, "method": method, "params": params}); err != nil {
+// call sends a request and waits for the response carrying its id. Anything
+// else — notifications, server-initiated requests (which carry a method, even
+// when their id collides with ours), non-JSON lines — is skipped.
+func (e *engine) call(ctx context.Context, method string, params any) (json.RawMessage, error) {
+	e.next++
+	id := e.next
+	if err := e.send(map[string]any{"id": id, "method": method, "params": params}); err != nil {
 		return nil, fmt.Errorf("%s: %w", method, err)
 	}
 	deadline := time.NewTimer(requestTimeout)
@@ -144,18 +205,19 @@ func (c *rpcClient) call(ctx context.Context, method string, params any) (json.R
 			return nil, ctx.Err()
 		case <-deadline.C:
 			return nil, fmt.Errorf("%s: no response within %s", method, requestTimeout)
-		case line, ok := <-c.lines:
+		case line, ok := <-e.lines:
 			if !ok {
-				return nil, errors.New(method + ": engine exited before answering")
+				return nil, fmt.Errorf("%s: %s", method, e.exitReason())
 			}
 			var msg struct {
 				ID     *int            `json:"id"`
+				Method string          `json:"method"`
 				Result json.RawMessage `json:"result"`
 				Error  *struct {
 					Message string `json:"message"`
 				} `json:"error"`
 			}
-			if json.Unmarshal(line, &msg) != nil || msg.ID == nil || *msg.ID != id {
+			if json.Unmarshal(line, &msg) != nil || msg.ID == nil || *msg.ID != id || msg.Method != "" {
 				continue
 			}
 			if msg.Error != nil {
@@ -165,3 +227,19 @@ func (c *rpcClient) call(ctx context.Context, method string, params any) (json.R
 		}
 	}
 }
+
+// boundedBuffer keeps the last `limit` bytes written to it.
+type boundedBuffer struct {
+	limit int
+	buf   bytes.Buffer
+}
+
+func (b *boundedBuffer) Write(p []byte) (int, error) {
+	b.buf.Write(p)
+	if extra := b.buf.Len() - b.limit; extra > 0 {
+		b.buf.Next(extra)
+	}
+	return len(p), nil
+}
+
+func (b *boundedBuffer) String() string { return b.buf.String() }

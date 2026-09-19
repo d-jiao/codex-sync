@@ -76,15 +76,20 @@ codex-sync pull --desktop      # pull, then refresh the desktop app
 codex-sync desktop refresh     # refresh only (after an earlier pull)
 ```
 
-The refresh backs up the app's databases to `~/.codex-sync/db-backup-<timestamp>/`,
+The refresh backs up the Codex databases to `~/.codex-sync/db-backup-<timestamp>/`,
 has the app's own engine index the new rollouts, copies thread names from the
 synced `session_index.jsonl` into the engine database (`--no-names` skips this),
 and schedules the app's full catalog sweep for its next launch. Relaunch the app
-and the pulled threads show up, named. It refuses to run while the app or a
-`codex` process is open — `pull --desktop` still completes the pull and then
-tells you to quit the app and run `codex-sync desktop refresh` — and it is safe
-to run repeatedly. The engine used is the ChatGPT app's bundled one
-(`--codex-bin` / `$CODEX_BIN` override it).
+and the pulled threads show up, named. It refuses to run while the ChatGPT app or
+any `codex` process is open (they hold the databases; a `codex` running from a
+path containing spaces is not detected) — `pull --desktop` still completes the
+pull, then reports the running app and exits non-zero, so `pull --desktop && push`
+stops there; quit the app and run `codex-sync desktop refresh`. The refresh is
+safe to run repeatedly. The engine used is the ChatGPT app's bundled one
+(`--codex-bin` / `$CODEX_BIN` override it; a different engine version may migrate
+every Codex database, which is why all of them are backed up). Backups
+accumulate — every run writes a full copy of the databases — and nothing
+references them, so old `db-backup-*` directories are safe to delete.
 
 ## How push behaves
 

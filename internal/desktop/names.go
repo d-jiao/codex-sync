@@ -1,10 +1,3 @@
-// Package desktop makes threads that arrived via sync visible to the Codex desktop
-// app (ChatGPT.app). The app builds its thread catalog once and then scans
-// incrementally past an updated_at watermark, so pulled threads — always older
-// than the watermark — never appear on their own, and its engine only indexes
-// rollouts it discovers itself. Refresh re-indexes through the app's engine,
-// copies thread names from session_index.jsonl into the engine database, and
-// schedules the app's full catalog sweep (design spec §8, §9, §13).
 package desktop
 
 import (
@@ -48,7 +41,7 @@ func ReconcileNames(baseDir string) (NamesReport, error) {
 	if err != nil {
 		return rep, err
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	cols, err := tableColumns(db, "threads")
 	if err != nil {
@@ -98,7 +91,7 @@ func indexNames(path string) (map[string]string, error) {
 		}
 		return nil, err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	names := map[string]string{}
 	sc := bufio.NewScanner(f)
@@ -136,7 +129,7 @@ func tableColumns(db *sql.DB, table string) (map[string]bool, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	cols := map[string]bool{}
 	for rows.Next() {
 		var cid int

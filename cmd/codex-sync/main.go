@@ -1161,10 +1161,15 @@ Examples:
 			}
 			// afterPull runs the desktop refresh once the pull itself succeeded.
 			afterPull := func(err error) error {
-				if err != nil || !desktopRefresh || dryRun {
+				if !refreshAfterPull(err, desktopRefresh, dryRun, syncer.HasState()) {
 					return err
 				}
 				return runDesktopRefresh(cmd, desktopOpts)
+			}
+			desktopHint := func() {
+				if desktopRefresh && !quiet {
+					fmt.Printf("%sThe desktop app would then be refreshed (quit it before the real pull).%s\n", colorDim, colorReset)
+				}
 			}
 
 			ctx := context.Background()
@@ -1178,18 +1183,18 @@ Examples:
 
 				if hasExisting && !force {
 					err := handleFirstPullWithExistingFiles(ctx, cmd, syncer, dryRun)
-					if err != nil || !syncer.HasState() { // aborted: nothing was pulled
-						return err
+					if err == nil && dryRun {
+						desktopHint()
 					}
-					return afterPull(nil)
+					return afterPull(err)
 				}
 			}
 
 			// Handle dry-run for normal pulls
 			if dryRun {
 				err := showPullPreview(ctx, syncer)
-				if err == nil && desktopRefresh && !quiet {
-					fmt.Printf("%sThe desktop app would then be refreshed (quit it before the real pull).%s\n", colorDim, colorReset)
+				if err == nil {
+					desktopHint()
 				}
 				return err
 			}
@@ -1295,7 +1300,7 @@ Examples:
 	cmd.Flags().BoolVar(&force, "force", false, "Overwrite existing files without confirmation")
 	cmd.Flags().BoolVar(&noDelete, "no-delete", false, "Never remove local files that vanished from the remote")
 	cmd.Flags().BoolVar(&desktopRefresh, "desktop", false, "After pulling, make the pulled threads visible in the ChatGPT desktop app (quit it first; see 'desktop refresh')")
-	cmd.Flags().StringVar(&codexBin, "codex-bin", "", "Engine binary for --desktop (default: $CODEX_BIN, the ChatGPT app's bundled engine, or codex on PATH)")
+	cmd.Flags().StringVar(&codexBin, "codex-bin", "", "Engine binary used by --desktop, ignored otherwise (default: $CODEX_BIN, the ChatGPT app's bundled engine, or codex on PATH; a different engine version may migrate every Codex database)")
 
 	return cmd
 }

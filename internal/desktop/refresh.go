@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 )
 
@@ -114,7 +115,7 @@ func threadRows(baseDir string) (int, error) {
 	if err != nil {
 		return 0, fmt.Errorf("engine left no %s: %w", StateDB, err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 	var n int
 	if err := db.QueryRow(`SELECT count(*) FROM threads`).Scan(&n); err != nil {
 		return 0, err
@@ -122,13 +123,19 @@ func threadRows(baseDir string) (int, error) {
 	return n, nil
 }
 
-// processPattern matches the desktop app and any engine that could hold the
-// databases open.
-const processPattern = `ChatGPT\.app/Contents/MacOS/ChatGPT|Resources/codex |codex app-server`
+// processPattern matches the processes that hold the databases open: the
+// desktop app and any codex engine or CLI, matched on argv[0] so that a shell
+// merely mentioning the engine path does not count. Paths containing spaces are
+// not matched; the app engine and PATH installs have none.
+const processPattern = `^([^ ]*/)?(codex|ChatGPT)( |$)`
 
-// runningCodexProcesses lists matching processes via pgrep; none is not an error.
+// runningCodexProcesses lists matching processes via pgrep. -a includes our own
+// ancestors, which pgrep skips by default — without it a Codex session running
+// codex-sync would hide the very engine that holds the databases. (On procps
+// -a merely means "list the full command line", which -fl already does.) No
+// match is not an error.
 func runningCodexProcesses() ([]string, error) {
-	out, err := exec.Command("pgrep", "-fl", processPattern).Output()
+	out, err := exec.Command("pgrep", "-afl", processPattern).Output()
 	var exitErr *exec.ExitError
 	if errors.As(err, &exitErr) && exitErr.ExitCode() == 1 {
 		return nil, nil // no match
@@ -136,11 +143,22 @@ func runningCodexProcesses() ([]string, error) {
 	if err != nil {
 		return nil, fmt.Errorf("pgrep: %w", err)
 	}
+	return parseProcessLines(string(out), os.Getpid()), nil
+}
+
+// parseProcessLines keeps the non-empty "PID command" lines that are not our
+// own process.
+func parseProcessLines(out string, self int) []string {
 	var procs []string
-	for _, l := range strings.Split(strings.TrimSpace(string(out)), "\n") {
-		if l != "" {
-			procs = append(procs, l)
+	for _, l := range strings.Split(out, "\n") {
+		l = strings.TrimSpace(l)
+		if l == "" {
+			continue
 		}
+		if pid, _, _ := strings.Cut(l, " "); pid == strconv.Itoa(self) {
+			continue
+		}
+		procs = append(procs, l)
 	}
-	return procs, nil
+	return procs
 }

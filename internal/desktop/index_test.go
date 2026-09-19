@@ -35,20 +35,22 @@ func TestHelperProcess(t *testing.T) {
 	}
 	args := os.Args[len(os.Args)-2:]
 	if strings.Join(args, " ") != "app-server --stdio" {
-		fmt.Fprintf(os.Stderr, "unexpected args %v\n", os.Args)
+		_, _ = fmt.Fprintf(os.Stderr, "unexpected args %v\n", os.Args)
 		os.Exit(2)
 	}
-	if os.Getenv("FAKE_CODEX_MODE") == "die" {
-		os.Exit(1)
+	mode := os.Getenv("FAKE_CODEX_MODE")
+	if mode == "die" {
+		_, _ = fmt.Fprintln(os.Stderr, "boom: unknown subcommand app-server")
+		os.Exit(2)
 	}
 	logf, _ := os.OpenFile(os.Getenv("FAKE_CODEX_LOG"), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
-	defer logf.Close()
-	fmt.Fprintf(logf, "{\"env\":{\"CODEX_HOME\":%q}}\n", os.Getenv("CODEX_HOME"))
+	defer func() { _ = logf.Close() }()
+	_, _ = fmt.Fprintf(logf, "{\"env\":{\"CODEX_HOME\":%q}}\n", os.Getenv("CODEX_HOME"))
 
 	in := bufio.NewScanner(os.Stdin)
 	out := bufio.NewWriter(os.Stdout)
 	for in.Scan() {
-		fmt.Fprintln(logf, in.Text())
+		_, _ = fmt.Fprintln(logf, in.Text())
 		var req struct {
 			ID     *int            `json:"id"`
 			Method string          `json:"method"`
@@ -67,6 +69,19 @@ func TestHelperProcess(t *testing.T) {
 				Archived bool   `json:"archived"`
 			}
 			_ = json.Unmarshal(req.Params, &p)
+			if mode == "error" {
+				_, _ = fmt.Fprintf(out, `{"id":%d,"error":{"code":-32000,"message":"database is locked"}}`+"\n", *req.ID)
+				_ = out.Flush()
+				continue
+			}
+			if mode == "chatty" {
+				// A server-initiated request reusing our id, a notification, and a
+				// non-JSON line must all be skipped, not taken for the response.
+				_, _ = fmt.Fprintf(out, `{"id":%d,"method":"item/tool/call","params":{"name":"x"}}`+"\n", *req.ID)
+				_, _ = fmt.Fprintln(out, `{"method":"thread/started","params":{"threadId":"t"}}`)
+				_, _ = fmt.Fprintln(out, `warning: not json`)
+				_ = out.Flush()
+			}
 			switch {
 			case p.Archived:
 				result = map[string]any{"data": []map[string]any{{"id": "arch-1"}}, "nextCursor": nil}
@@ -76,14 +91,14 @@ func TestHelperProcess(t *testing.T) {
 				result = map[string]any{"data": []map[string]any{{"id": "live-3"}}, "nextCursor": nil}
 			}
 		default:
-			fmt.Fprintf(out, `{"id":%d,"error":{"code":-32601,"message":"unknown method %s"}}`+"\n", *req.ID, req.Method)
-			out.Flush()
+			_, _ = fmt.Fprintf(out, `{"id":%d,"error":{"code":-32601,"message":"unknown method %s"}}`+"\n", *req.ID, req.Method)
+			_ = out.Flush()
 			continue
 		}
 		b, _ := json.Marshal(map[string]any{"id": *req.ID, "result": result})
-		out.Write(b)
-		out.WriteString("\n")
-		out.Flush()
+		_, _ = out.Write(b)
+		_, _ = out.WriteString("\n")
+		_ = out.Flush()
 	}
 	os.Exit(0)
 }
@@ -153,5 +168,42 @@ func TestIndexRolloutsReportsAMissingBinary(t *testing.T) {
 	_, err := IndexRollouts(context.Background(), filepath.Join(t.TempDir(), "nope"), t.TempDir(), []string{"openai"})
 	if err == nil {
 		t.Fatal("expected an error for a missing engine binary")
+	}
+}
+
+func TestIndexRolloutsSkipsServerRequestsAndNotifications(t *testing.T) {
+	bin := fakeEngine(t, filepath.Join(t.TempDir(), "requests.log"), "chatty")
+
+	listed, err := IndexRollouts(context.Background(), bin, t.TempDir(), []string{"openai"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if listed.Live != 3 || listed.Archived != 1 {
+		t.Errorf("listed = %+v, want 3 live, 1 archived", listed)
+	}
+}
+
+func TestIndexRolloutsReportsAnErrorResponse(t *testing.T) {
+	bin := fakeEngine(t, filepath.Join(t.TempDir(), "requests.log"), "error")
+
+	_, err := IndexRollouts(context.Background(), bin, t.TempDir(), []string{"openai"})
+	if err == nil || !strings.Contains(err.Error(), "database is locked") {
+		t.Fatalf("err = %v, want the engine's error message", err)
+	}
+}
+
+func TestIndexRolloutsIncludesStderrAndExitStatusWhenTheEngineDies(t *testing.T) {
+	bin := fakeEngine(t, filepath.Join(t.TempDir(), "requests.log"), "die")
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	_, err := IndexRollouts(ctx, bin, t.TempDir(), []string{"openai"})
+	if err == nil {
+		t.Fatal("expected an error")
+	}
+	for _, want := range []string{"boom", "exit status 2"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error lacks %q: %v", want, err)
+		}
 	}
 }

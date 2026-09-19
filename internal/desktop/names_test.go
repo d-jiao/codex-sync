@@ -16,7 +16,7 @@ func newStateDB(t *testing.T, baseDir string, rows [][2]string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 	if _, err := db.Exec(`CREATE TABLE threads (id TEXT PRIMARY KEY, rollout_path TEXT NOT NULL, name TEXT, title TEXT)`); err != nil {
 		t.Fatal(err)
 	}
@@ -37,7 +37,7 @@ func threadName(t *testing.T, baseDir, id string) string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 	var name sql.NullString
 	if err := db.QueryRow(`SELECT name FROM threads WHERE id = ?`, id).Scan(&name); err != nil {
 		t.Fatal(err)
@@ -110,7 +110,7 @@ func TestReconcileNamesRefusesUnknownSchema(t *testing.T) {
 	if _, err := db.Exec(`CREATE TABLE threads (id TEXT PRIMARY KEY, rollout_path TEXT NOT NULL)`); err != nil {
 		t.Fatal(err)
 	}
-	db.Close()
+	_ = db.Close()
 	writeIndex(t, base, `{"id":"a","thread_name":"x","updated_at":"2026-09-13T04:26:26Z"}`)
 
 	if _, err := ReconcileNames(base); err == nil {

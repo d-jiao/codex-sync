@@ -59,7 +59,8 @@ Layered, with a pluggable storage abstraction:
 ├── config.yaml  # storage + encryption config
 ├── age-key.txt  # encryption identity (derived or random)
 ├── state.json   # per-file hash/size/mtime + last push/pull times
-└── trash/       # files pull removed locally, one batch dir per run (never touched by `reset`)
+├── trash/       # files pull removed locally, one batch dir per run (never touched by `reset`)
+└── db-backup-<ts>/  # Codex databases + session index copied by `desktop refresh` before it writes (never pruned)
 
 ~/.codex/        # what gets synced (see config.SyncPaths)
 ```
@@ -70,6 +71,7 @@ Layered, with a pluggable storage abstraction:
 - **Push** encrypts only files whose current hash differs from state; deletions detected from state are batched via `DeleteBatch`.
 - **Pull** downloads when the local file is missing, or when remote `LastModified` is after the state's `Uploaded` time. If the local hash **also** differs from state (both sides changed), it's a **conflict**: local is kept, remote is written to `<path>.conflict.<timestamp>`. `codex-sync conflicts` resolves them (and updates state on resolution). Sidecars are local artifacts: `*.conflict.*` is a hard exclude and `handleConflict` drops the sidecar's state entry, so they are never uploaded, tracked, or trashed by a later pull — and **push skips a file that still has a live sidecar**, reporting `unresolved conflict for <path>` instead of overwriting the remote.
 - **Errors fail the command**: push/pull print per-file errors to stderr even with `-q` and exit non-zero when any file failed (`reportSyncErrors` in `main.go`), so the launchd chain `pull -q && push -q` stops and the log says why.
+- **`pull --desktop`** runs the desktop refresh only after a fully successful, real pull (`refreshAfterPull`: not `--dry-run`, not an aborted first pull, no failed files). A running app is not an error for the pull itself, but the command then exits non-zero naming `desktop refresh` as the next step.
 - **Merge on pull**: `session_index.jsonl` and `history.jsonl` are unioned instead of conflicted whenever the remote copy changed since the last sync (or was never seen locally); the merged result is written back locally and recorded in state so the next push uploads the union.
 - **Removal on pull**: a file tracked in state but absent from the remote listing is moved to `~/.codex-sync/trash/<batch>/` when its on-disk hash still matches the last-synced hash; a locally modified file is left in place and reported instead. `pull --no-delete` disables this. Pull returns immediately on an empty remote listing, before removal logic runs, so a temporarily empty bucket can never delete local files.
 - **First pull with existing local files** is handled specially in `cmd/codex-sync/main.go` (`handleFirstPullWithExistingFiles`): shows a preview diff and offers backup-to-`~/.codex.backup.<ts>`/overwrite/abort.

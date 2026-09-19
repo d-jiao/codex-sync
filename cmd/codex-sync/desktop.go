@@ -64,7 +64,7 @@ Examples:
 
 	cmd.Flags().BoolVar(&noNames, "no-names", false, "Do not copy thread names from session_index.jsonl")
 	cmd.Flags().BoolVar(&noBackup, "no-backup", false, "Skip the database backup")
-	cmd.Flags().StringVar(&codexBin, "codex-bin", "", "Engine binary (default: $CODEX_BIN, the ChatGPT app's bundled engine, or codex on PATH)")
+	cmd.Flags().StringVar(&codexBin, "codex-bin", "", "Engine binary (default: $CODEX_BIN, the ChatGPT app's bundled engine, or codex on PATH; a different engine version may migrate every Codex database)")
 
 	return cmd
 }
@@ -106,4 +106,11 @@ func runDesktopRefresh(cmd *cobra.Command, opts desktop.Options) error {
 		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "%s✓%s Desktop refresh complete\n%s\n", colorGreen, colorReset, rep)
 	}
 	return nil
+}
+
+// refreshAfterPull decides whether pull --desktop runs the refresh: only when it
+// was requested, the pull was real (not --dry-run), something was actually
+// pulled (a first pull can be aborted at the prompt), and no file failed.
+func refreshAfterPull(pullErr error, requested, dryRun, pulled bool) bool {
+	return pullErr == nil && requested && !dryRun && pulled
 }

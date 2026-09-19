@@ -121,3 +121,23 @@ func TestRunDesktopRefreshPassesOtherErrorsThrough(t *testing.T) {
 		t.Error("an engine failure is not a usage mistake; usage must be silenced")
 	}
 }
+
+func TestRefreshAfterPullGate(t *testing.T) {
+	cases := []struct {
+		name                      string
+		err                       error
+		requested, dryRun, pulled bool
+		want                      bool
+	}{
+		{"requested after a real pull", nil, true, false, true, true},
+		{"not requested", nil, false, false, true, false},
+		{"dry run only previews", nil, true, true, true, false},
+		{"first pull aborted: nothing pulled", nil, true, false, false, false},
+		{"pull failed", errors.New("3 file(s) failed"), true, false, true, false},
+	}
+	for _, c := range cases {
+		if got := refreshAfterPull(c.err, c.requested, c.dryRun, c.pulled); got != c.want {
+			t.Errorf("%s: refreshAfterPull = %v, want %v", c.name, got, c.want)
+		}
+	}
+}

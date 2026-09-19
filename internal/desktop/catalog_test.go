@@ -19,7 +19,7 @@ func newCatalogDB(t *testing.T, baseDir string, hosts map[string]int64) string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 	if _, err := db.Exec(`CREATE TABLE local_thread_catalog_sync_state (
 		host_id TEXT PRIMARY KEY, watermark_updated_at REAL,
 		initial_build_complete INTEGER NOT NULL DEFAULT 0,
@@ -40,7 +40,7 @@ func lastFullReconciledAt(t *testing.T, path, host string) sql.NullInt64 {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 	var v sql.NullInt64
 	if err := db.QueryRow(`SELECT last_full_reconciled_at FROM local_thread_catalog_sync_state WHERE host_id = ?`, host).Scan(&v); err != nil {
 		t.Fatal(err)
@@ -92,7 +92,7 @@ func TestResetCatalogLeavesUnknownSchemaAlone(t *testing.T) {
 	if _, err := db.Exec(`CREATE TABLE something_else (x INTEGER)`); err != nil {
 		t.Fatal(err)
 	}
-	db.Close()
+	_ = db.Close()
 
 	rep, err := ResetCatalog(base)
 	if err != nil {
