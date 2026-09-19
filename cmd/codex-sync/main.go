@@ -23,6 +23,7 @@ import (
 
 	"github.com/d-jiao/codex-sync/internal/config"
 	"github.com/d-jiao/codex-sync/internal/crypto"
+	"github.com/d-jiao/codex-sync/internal/desktop"
 	"github.com/d-jiao/codex-sync/internal/paths"
 	"github.com/d-jiao/codex-sync/internal/storage"
 	"github.com/d-jiao/codex-sync/internal/sync"
@@ -71,6 +72,7 @@ func main() {
 		updateCmd(),
 		changelogCmd(),
 		pathsCmd(),
+		desktopCmd(),
 	)
 
 	if err := rootCmd.Execute(); err != nil {
@@ -1123,7 +1125,8 @@ func pushCmd() *cobra.Command {
 }
 
 func pullCmd() *cobra.Command {
-	var dryRun, force, noDelete bool
+	var dryRun, force, noDelete, desktopRefresh bool
+	var codexBin string
 
 	cmd := &cobra.Command{
 		Use:   "pull",
@@ -1136,7 +1139,8 @@ before any files are overwritten. Use --dry-run to preview changes first.
 Examples:
   codex-sync pull              # Pull with safety prompts
   codex-sync pull --dry-run    # Preview what would be changed
-  codex-sync pull --force      # Skip confirmation prompts`,
+  codex-sync pull --force      # Skip confirmation prompts
+  codex-sync pull --desktop    # Then make pulled threads visible in the desktop app`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg, err := config.Load()
 			if err != nil {
@@ -1149,6 +1153,25 @@ Examples:
 			}
 			syncer.SetNoDelete(noDelete)
 
+			var desktopOpts desktop.Options
+			if desktopRefresh {
+				if desktopOpts, err = desktopOptions(codexBin, false, false); err != nil {
+					return err
+				}
+			}
+			// afterPull runs the desktop refresh once the pull itself succeeded.
+			afterPull := func(err error) error {
+				if !refreshAfterPull(err, desktopRefresh, dryRun, syncer.HasState()) {
+					return err
+				}
+				return runDesktopRefresh(cmd, desktopOpts)
+			}
+			desktopHint := func() {
+				if desktopRefresh && !quiet {
+					fmt.Printf("%sThe desktop app would then be refreshed (quit it before the real pull).%s\n", colorDim, colorReset)
+				}
+			}
+
 			ctx := context.Background()
 
 			// Check for first pull with existing local files
@@ -1159,13 +1182,21 @@ Examples:
 				}
 
 				if hasExisting && !force {
-					return handleFirstPullWithExistingFiles(ctx, cmd, syncer, dryRun)
+					err := handleFirstPullWithExistingFiles(ctx, cmd, syncer, dryRun)
+					if err == nil && dryRun {
+						desktopHint()
+					}
+					return afterPull(err)
 				}
 			}
 
 			// Handle dry-run for normal pulls
 			if dryRun {
-				return showPullPreview(ctx, syncer)
+				err := showPullPreview(ctx, syncer)
+				if err == nil {
+					desktopHint()
+				}
+				return err
 			}
 
 			if !quiet {
@@ -1261,13 +1292,15 @@ Examples:
 				}
 			}
 
-			return reportSyncErrors(cmd, os.Stderr, result.Errors)
+			return afterPull(reportSyncErrors(cmd, os.Stderr, result.Errors))
 		},
 	}
 
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Show what would be changed without making changes")
 	cmd.Flags().BoolVar(&force, "force", false, "Overwrite existing files without confirmation")
 	cmd.Flags().BoolVar(&noDelete, "no-delete", false, "Never remove local files that vanished from the remote")
+	cmd.Flags().BoolVar(&desktopRefresh, "desktop", false, "After pulling, make the pulled threads visible in the ChatGPT desktop app (quit it first; see 'desktop refresh')")
+	cmd.Flags().StringVar(&codexBin, "codex-bin", "", "Engine binary used by --desktop, ignored otherwise (default: $CODEX_BIN, the ChatGPT app's bundled engine, or codex on PATH; a different engine version may migrate every Codex database)")
 
 	return cmd
 }

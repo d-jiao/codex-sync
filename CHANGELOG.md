@@ -12,6 +12,7 @@
 - `make install-launchd` / `make uninstall-launchd` targets and a daily launchd agent template (`scripts/launchd/com.codex-sync.daily.plist.template`); `CODEX_HOME` is baked into the agent when set at install time.
 - Push skips a file that still has a live `.conflict.*` sidecar and reports `unresolved conflict for <path>`; sidecars are hard-excluded and never uploaded, tracked or trashed.
 - `push`/`pull` print errors to stderr even with `-q` and exit non-zero when any file failed.
+- `codex-sync desktop refresh` and `pull --desktop`: make pulled threads visible in the ChatGPT desktop app (engine re-index, names from `session_index.jsonl`, full catalog sweep on next launch), with a database backup first; refuses while the app is running.
 
 ### Changed
 

@@ -28,6 +28,7 @@ jobs:
           go test -coverprofile=coverage.out -covermode=atomic \
             ./internal/config/ \
             ./internal/crypto/ \
+            ./internal/desktop/ \
             ./internal/paths/ \
             ./internal/storage/ \
             ./internal/sync/ \

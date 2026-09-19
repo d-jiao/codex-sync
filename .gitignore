@@ -50,3 +50,6 @@ Thumbs.db
 
 # superpowers SDD workspace (ledger, briefs, review packages)
 .superpowers/
+
+# Superpowers worktrees
+.worktrees/
