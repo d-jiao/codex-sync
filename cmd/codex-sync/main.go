@@ -1122,6 +1122,7 @@ last synced is still kept, and reported instead.`,
 					}
 				}
 				printPendingDeletes(os.Stdout, result.PendingDeletes)
+				printUnverifiedDeletes(os.Stdout, result.UnverifiedDeletes)
 			}
 
 			return reportSyncErrors(cmd, os.Stderr, result.Errors)
@@ -1150,6 +1151,28 @@ func printPendingDeletes(w io.Writer, pending []string) {
 		_, _ = fmt.Fprintf(w, "  %s•%s %s\n", colorDim, colorReset, util.TruncatePath(p, 60))
 	}
 	_, _ = fmt.Fprintf(w, "  Run %scodex-sync push --force%s to delete them remotely too.\n", colorBold, colorReset)
+}
+
+// printUnverifiedDeletes names the remote objects removed without a revision
+// to match against. Storage that reports no ETag leaves timestamps as the only
+// evidence that no other device wrote the file first, which is worth saying out
+// loud rather than presenting every delete as equally safe.
+func printUnverifiedDeletes(w io.Writer, unverified []string) {
+	if len(unverified) == 0 {
+		return
+	}
+	_, _ = fmt.Fprintf(w, "\n%s%d file(s) were deleted remotely without a version check:%s\n",
+		colorYellow, len(unverified), colorReset)
+	const shown = 10
+	for i, p := range unverified {
+		if i == shown {
+			_, _ = fmt.Fprintf(w, "  %s… and %d more%s\n", colorDim, len(unverified)-shown, colorReset)
+			break
+		}
+		_, _ = fmt.Fprintf(w, "  %s•%s %s\n", colorDim, colorReset, util.TruncatePath(p, 60))
+	}
+	_, _ = fmt.Fprintf(w, "  Your storage reports no version for these objects, so a copy another\n")
+	_, _ = fmt.Fprintf(w, "  device uploaded in the last moments may have been removed with them.\n")
 }
 
 func pullCmd() *cobra.Command {

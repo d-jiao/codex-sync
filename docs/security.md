@@ -95,9 +95,13 @@ are not copied into `~/.codex.backup.<timestamp>` either.
   *empty* bucket removes nothing at all.
   In the other direction, push does not delete remote objects unless you pass
   `--force`, and even then it skips any object another device has replaced
-  since your last sync, using a conditional delete where the provider supports
-  one. A machine with a stale or partially configured Codex home therefore
-  cannot erase everyone else's copy.
+  since your last sync, re-reading each object's version immediately before
+  deleting it and sending the delete conditionally where the provider supports
+  it. A machine with a stale or partially configured Codex home therefore
+  cannot erase everyone else's copy. Not every S3-compatible server enforces
+  `If-Match` on a DELETE, so the version re-read — not the header — is the
+  guard that has to hold; storage that reports no version leaves only
+  timestamps, and push names those deletes in its output.
 - **Self-update.** `codex-sync update` downloads a release binary over HTTPS
   from this repository's GitHub Releases and verifies it against the release's
   `checksums.txt` when one is published (audit M2). Releases without checksums

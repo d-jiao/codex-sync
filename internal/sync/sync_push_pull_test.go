@@ -43,6 +43,9 @@ type mockStorage struct {
 	// revision says, standing in for the S3-compatible servers that accept
 	// If-Match on a DELETE and then disregard it.
 	ignorePreconditions bool
+	// omitVersions blanks every reported revision, standing in for a WebDAV
+	// server that returns no ETag.
+	omitVersions bool
 	// downloadErr, when set for a key, makes Download fail.
 	downloadErr map[string]error
 	// uploadErr, when set for a key, makes Upload fail.
@@ -123,13 +126,17 @@ func (m *mockStorage) List(_ context.Context, prefix string) ([]storage.ObjectIn
 	var result []storage.ObjectInfo
 	for key, obj := range m.objects {
 		if strings.HasPrefix(key, prefix) {
-			result = append(result, storage.ObjectInfo{
+			info := storage.ObjectInfo{
 				Key:          key,
 				Size:         int64(len(obj.data)),
 				LastModified: obj.lastModified,
 				ETag:         obj.version,
 				Version:      obj.version,
-			})
+			}
+			if m.omitVersions {
+				info.ETag, info.Version = "", ""
+			}
+			result = append(result, info)
 		}
 	}
 	hook := m.afterList
@@ -147,13 +154,17 @@ func (m *mockStorage) Head(_ context.Context, key string) (*storage.ObjectInfo, 
 	if !ok {
 		return nil, fmt.Errorf("object not found: %s", key)
 	}
-	return &storage.ObjectInfo{
+	info := &storage.ObjectInfo{
 		Key:          key,
 		Size:         int64(len(obj.data)),
 		LastModified: obj.lastModified,
 		ETag:         obj.version,
 		Version:      obj.version,
-	}, nil
+	}
+	if m.omitVersions {
+		info.ETag, info.Version = "", ""
+	}
+	return info, nil
 }
 
 // DeleteIfUnchanged implements storage.ConditionalDeleter so deletion tests

@@ -49,3 +49,20 @@ func TestPrintPendingDeletesTruncatesLongLists(t *testing.T) {
 		t.Errorf("expected a truncation note, got:\n%s", buf.String())
 	}
 }
+
+func TestPrintUnverifiedDeletes(t *testing.T) {
+	var buf bytes.Buffer
+	printUnverifiedDeletes(&buf, nil)
+	if buf.Len() != 0 {
+		t.Fatalf("expected no output for a fully guarded push, got %q", buf.String())
+	}
+
+	printUnverifiedDeletes(&buf, []string{"sessions/a.jsonl"})
+	out := buf.String()
+	if !strings.Contains(out, "sessions/a.jsonl") {
+		t.Errorf("output should name the file: %q", out)
+	}
+	if !strings.Contains(out, "no version") {
+		t.Errorf("output should explain the weaker guarantee: %q", out)
+	}
+}

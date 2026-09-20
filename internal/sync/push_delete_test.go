@@ -186,3 +186,59 @@ func TestForcedPushRereadsRevisionWhenPreconditionsAreIgnored(t *testing.T) {
 		t.Errorf("the peer's object must survive, got %d objects", len(objs))
 	}
 }
+
+// A server that reports no revision (some WebDAV deployments omit ETags) can
+// only be guarded by timestamps, and the user is told which deletes carried
+// that weaker guarantee.
+func TestForcedPushReportsDeletesTheProviderCouldNotVerify(t *testing.T) {
+	env := setupTestEnv(t)
+	ctx := context.Background()
+	env.syncer.SetAllowRemoteDeletes(true)
+
+	writeFile(t, env.claudeDir, "AGENTS.md", "# v1")
+	if _, err := env.syncer.Push(ctx); err != nil {
+		t.Fatalf("push: %v", err)
+	}
+	if err := os.Remove(filepath.Join(env.claudeDir, "AGENTS.md")); err != nil {
+		t.Fatal(err)
+	}
+	env.store.omitVersions = true
+
+	result, err := env.syncer.Push(ctx)
+	if err != nil {
+		t.Fatalf("push: %v", err)
+	}
+	if len(result.Errors) != 0 {
+		t.Fatalf("unexpected errors: %v", result.Errors)
+	}
+	if len(result.Deleted) != 1 {
+		t.Fatalf("expected the delete to go through, got %v", result.Deleted)
+	}
+	if len(result.UnverifiedDeletes) != 1 || result.UnverifiedDeletes[0] != "AGENTS.md" {
+		t.Fatalf("expected AGENTS.md reported as unverified, got %v", result.UnverifiedDeletes)
+	}
+}
+
+// With a revision available the delete is fully guarded, so nothing is
+// reported as unverified.
+func TestForcedPushReportsNoUnverifiedDeletesWithRevisions(t *testing.T) {
+	env := setupTestEnv(t)
+	ctx := context.Background()
+	env.syncer.SetAllowRemoteDeletes(true)
+
+	writeFile(t, env.claudeDir, "AGENTS.md", "# v1")
+	if _, err := env.syncer.Push(ctx); err != nil {
+		t.Fatalf("push: %v", err)
+	}
+	if err := os.Remove(filepath.Join(env.claudeDir, "AGENTS.md")); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := env.syncer.Push(ctx)
+	if err != nil {
+		t.Fatalf("push: %v", err)
+	}
+	if len(result.UnverifiedDeletes) != 0 {
+		t.Errorf("a revision-guarded delete is not unverified: %v", result.UnverifiedDeletes)
+	}
+}

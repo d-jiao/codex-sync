@@ -360,10 +360,21 @@ erase the copy every other machine pulls from. Push lists them instead:
 
 `push --force` deletes them, but still refuses to remove an object that
 another machine has replaced since your last sync — that file is reported as a
-conflict and left in storage. Pull it first, then push again. Where the
-provider supports it (S3, R2, GCS, and WebDAV servers that honour `If-Match`),
-the delete is also conditional on the object version, so a device that uploads
-in the middle of your push keeps its copy.
+conflict and left in storage. Pull it first, then push again. Each object's
+version is re-read immediately before its delete, so the window in which a
+device uploading during your push can lose its copy is a single round trip.
+Where the provider supports it (S3, R2, GCS, and WebDAV servers that honour
+`If-Match`), the delete is also sent conditionally on that version.
+
+Storage that reports no version at all — some WebDAV servers omit ETags — can
+only be guarded by timestamps, and those deletes are listed separately:
+
+```
+1 file(s) were deleted remotely without a version check:
+  • memories/old-note.md
+  Your storage reports no version for these objects, so a copy another
+  device uploaded in the last moments may have been removed with them.
+```
 
 ### Pull
 

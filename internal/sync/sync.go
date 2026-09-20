@@ -75,6 +75,9 @@ type SyncResult struct {
 	// PendingDeletes are files deleted locally whose remote copy was left
 	// alone because the push was not forced.
 	PendingDeletes []string
+	// UnverifiedDeletes are removed remote objects the provider reported no
+	// revision for, so the delete could only be guarded by timestamps.
+	UnverifiedDeletes []string
 }
 
 type ProgressEvent struct {
@@ -390,6 +393,11 @@ func (s *Syncer) applyDeletes(ctx context.Context, deletes []FileChange, result 
 		}
 		s.state.RemoveFile(change.Path)
 		result.Deleted = append(result.Deleted, change.Path)
+		if obj.Version == "" {
+			// Nothing to put in an If-Match, so the only thing that stood
+			// between this delete and a concurrent upload was a timestamp.
+			result.UnverifiedDeletes = append(result.UnverifiedDeletes, change.Path)
+		}
 	}
 }
 

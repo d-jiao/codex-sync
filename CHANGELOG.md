@@ -19,7 +19,7 @@
 ### Changed
 
 - Push no longer deletes remote objects by default. A stale checkout, a restored backup or a half-configured `sync_paths` can no longer erase the copy other machines pull from; `push --force` opts in.
-- `push --force` refuses to delete an object another machine replaced since the last sync (reported as a conflict) and, where the provider supports it, issues the delete conditionally on the object's version.
+- `push --force` refuses to delete an object another machine replaced since the last sync (reported as a conflict) and, where the provider supports it, issues the delete conditionally on the object's version. Each object's version is re-read immediately before its delete rather than trusted from the listing taken at the start of the batch, so the guard holds on S3-compatible servers that accept `If-Match` on a DELETE and ignore it. Deletes the provider reported no version for are listed after the push as guarded by timestamps only.
 - Pull writes every file atomically through a temporary file and refuses any path that crosses a symlink, instead of following it out of the Codex home. Conflict sidecars get a numeric suffix rather than overwriting an existing sidecar from the same second.
 - Push re-checks a file's size and modification time around the upload and leaves it unsynced if Codex appended to it mid-upload, so partial content is never recorded as synchronized.
 - A manifest that is listed remotely but cannot be downloaded, decrypted or parsed now fails the pull before anything is written; a missing manifest is still treated as a legacy remote. A failed manifest upload no longer discards the push: the state records `manifest_dirty` and the next push retries it.
