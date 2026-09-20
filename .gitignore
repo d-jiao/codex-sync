@@ -2,6 +2,7 @@
 bin/codex-sync
 bin/codex-sync.exe
 bin/codex-sync-*
+bin/checksums.txt
 
 # Root-level build output. `make build` targets ./bin, but a plain
 # `go build -o codex-sync ./cmd/codex-sync` drops a ~55MB binary here,
