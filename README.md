@@ -65,9 +65,23 @@ Two things to know up front:
 
 ## Install
 
-Requirements: macOS, [Go](https://go.dev/dl/) 1.24 or newer, and a bucket at
-one of the supported providers (next section). There are no pre-built binaries
-or packages yet.
+Requirements: macOS, and a bucket at one of the supported providers (next
+section). Building from source additionally needs [Go](https://go.dev/dl/) 1.24
+or newer.
+
+Download the asset for your platform from the
+[latest release](https://github.com/d-jiao/codex-sync/releases/latest), check it
+against the `checksums.txt` published beside it, and put it on your `PATH`:
+
+```bash
+shasum -a 256 --ignore-missing -c checksums.txt
+chmod +x codex-sync-darwin-arm64
+mv codex-sync-darwin-arm64 ~/.local/bin/codex-sync
+xattr -d com.apple.quarantine ~/.local/bin/codex-sync   # clears the download quarantine
+codex-sync --version
+```
+
+Or build from source:
 
 ```bash
 git clone https://github.com/d-jiao/codex-sync
@@ -76,7 +90,9 @@ make build && make install    # installs ~/.local/bin/codex-sync (override with 
 codex-sync --version
 ```
 
-Make sure `~/.local/bin` is on your `PATH`.
+Make sure `~/.local/bin` is on your `PATH`. Once installed, `codex-sync update`
+upgrades in place from the latest release and refuses any download whose
+checksum does not match.
 
 ## Set up
 
