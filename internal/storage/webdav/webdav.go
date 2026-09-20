@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"path"
 	"strings"
 	"time"
@@ -67,18 +68,54 @@ func isLocalhost(url string) bool {
 	return host == "localhost" || host == "127.0.0.1" || host == "::1"
 }
 
-func (c *Client) fullURL(key string) string {
-	if c.pathPrefix != "" {
-		return c.baseURL + "/" + c.pathPrefix + "/" + key
+// escapeKey percent-encodes each slash-separated segment of a storage key so
+// it can be concatenated into a URL. Keys may legitimately contain "#", "?",
+// "%" and spaces (Codex attachment names do), all of which change the meaning
+// of a request target when left raw.
+func escapeKey(key string) string {
+	segments := strings.Split(key, "/")
+	for i, segment := range segments {
+		segments[i] = url.PathEscape(segment)
 	}
-	return c.baseURL + "/" + key
+	return strings.Join(segments, "/")
+}
+
+// unescapeKey is the inverse of escapeKey. A segment that is not valid
+// percent-encoding is kept verbatim, which covers servers that echo raw
+// characters back in PROPFIND hrefs.
+func unescapeKey(key string) string {
+	segments := strings.Split(key, "/")
+	for i, segment := range segments {
+		if decoded, err := url.PathUnescape(segment); err == nil {
+			segments[i] = decoded
+		}
+	}
+	return strings.Join(segments, "/")
+}
+
+func (c *Client) fullURL(key string) string {
+	return c.collectionURL() + escapeKey(key)
 }
 
 func (c *Client) collectionURL() string {
 	if c.pathPrefix != "" {
-		return c.baseURL + "/" + c.pathPrefix + "/"
+		return c.baseURL + "/" + escapeKey(c.pathPrefix) + "/"
 	}
 	return c.baseURL + "/"
+}
+
+// collectionPath is collectionURL without scheme and host, decoded, for
+// comparison against PROPFIND hrefs that omit the origin.
+func (c *Client) collectionPath() string {
+	base := ""
+	if u, err := url.Parse(c.baseURL); err == nil {
+		base = unescapeKey(u.EscapedPath())
+	}
+	base = strings.TrimRight(base, "/")
+	if c.pathPrefix != "" {
+		return base + "/" + c.pathPrefix + "/"
+	}
+	return base + "/"
 }
 
 func (c *Client) doRequest(ctx context.Context, method, url string, body io.Reader, headers map[string]string) (*http.Response, error) {
@@ -224,7 +261,7 @@ const propfindListBody = `<?xml version="1.0" encoding="UTF-8"?>
 func (c *Client) List(ctx context.Context, prefix string) ([]storage.ObjectInfo, error) {
 	startURL := c.collectionURL()
 	if prefix != "" {
-		startURL = c.collectionURL() + prefix
+		startURL = c.collectionURL() + escapeKey(prefix)
 		if !strings.HasSuffix(startURL, "/") {
 			startURL += "/"
 		}
@@ -286,12 +323,12 @@ func (c *Client) listRecursive(ctx context.Context, startURL string) ([]storage.
 		}
 
 		for _, r := range responses {
-			key := c.hrefToKey(r.Href)
+			key := c.hrefToKey(r.RawHref)
 			if key == "" {
 				continue // the collection referencing itself
 			}
 			if r.IsCollection {
-				childURL := c.collectionURL() + key
+				childURL := c.collectionURL() + escapeKey(key)
 				if !strings.HasSuffix(childURL, "/") {
 					childURL += "/"
 				}
@@ -354,7 +391,7 @@ func (c *Client) collectObjects(responses []parsedResponse) []storage.ObjectInfo
 		if r.IsCollection {
 			continue
 		}
-		key := c.hrefToKey(r.Href)
+		key := c.hrefToKey(r.RawHref)
 		if key == "" {
 			continue
 		}
@@ -370,14 +407,23 @@ func (c *Client) collectObjects(responses []parsedResponse) []storage.ObjectInfo
 }
 
 // hrefToKey converts a PROPFIND href into a storage key relative to the
-// configured path prefix.
-func (c *Client) hrefToKey(href string) string {
-	key := href
-	if idx := strings.Index(key, c.pathPrefix+"/"); c.pathPrefix != "" && idx >= 0 {
-		key = key[idx+len(c.pathPrefix)+1:]
-	} else {
-		key = strings.TrimPrefix(key, c.collectionURL())
+// configured path prefix. The href is taken raw so each path segment can be
+// decoded individually, which keeps encoded separators from being mistaken for
+// real ones.
+func (c *Client) hrefToKey(rawHref string) string {
+	escapedPath := rawHref
+	if u, err := url.Parse(rawHref); err == nil && u.Host != "" {
+		escapedPath = u.EscapedPath()
 	}
+	key := unescapeKey(escapedPath)
+
+	if c.pathPrefix != "" {
+		if idx := strings.Index(key, c.pathPrefix+"/"); idx >= 0 {
+			key = key[idx+len(c.pathPrefix)+1:]
+			return strings.TrimLeft(key, "/")
+		}
+	}
+	key = strings.TrimPrefix(key, c.collectionPath())
 	return strings.TrimLeft(key, "/")
 }
 
@@ -494,7 +540,7 @@ func (c *Client) ensureParentDirs(ctx context.Context, key string) error {
 			current = current + "/" + part
 		}
 
-		mkcolURL := c.collectionURL() + current + "/"
+		mkcolURL := c.collectionURL() + escapeKey(current) + "/"
 		resp, err := c.doRequest(ctx, "MKCOL", mkcolURL, nil, nil)
 		if err != nil {
 			return err

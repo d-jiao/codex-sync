@@ -34,7 +34,11 @@ type propResourceType struct {
 }
 
 type parsedResponse struct {
-	Href          string
+	// Href is the decoded href, convenient for logging and diagnostics.
+	Href string
+	// RawHref is the href exactly as the server sent it. Key derivation uses
+	// this so each path segment can be decoded on its own.
+	RawHref       string
 	ContentLength int64
 	LastModified  time.Time
 	ETag          string
@@ -56,6 +60,7 @@ func parsePropfindResponse(data []byte) ([]parsedResponse, error) {
 			href = decoded
 		}
 		r.Href = href
+		r.RawHref = entry.Href
 
 		for _, ps := range entry.Propstat {
 			if !strings.Contains(ps.Status, "200") {
