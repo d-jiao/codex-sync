@@ -213,7 +213,16 @@ func (s *Syncer) Push(ctx context.Context) (*SyncResult, error) {
 
 	if len(changes) == 0 {
 		s.progress(ProgressEvent{Action: "scan", Complete: true})
-		return result, nil
+		if !s.state.ManifestDirty {
+			return result, nil
+		}
+		// Nothing to send, but a previous push failed to publish the mtime
+		// manifest; finish that before reporting success.
+		err := s.pushManifest(ctx)
+		if saveErr := s.state.Save(); saveErr != nil && err == nil {
+			err = fmt.Errorf("failed to save state: %w", saveErr)
+		}
+		return result, err
 	}
 
 	// Separate uploads from deletes. A file with a live conflict sidecar is
@@ -285,17 +294,22 @@ func (s *Syncer) Push(ctx context.Context) (*SyncResult, error) {
 	s.progress(ProgressEvent{Action: "upload", Complete: true, Total: total})
 
 	// Upload manifest with file mtimes for cross-device mtime preservation
-	if len(result.Uploaded) > 0 || len(result.Deleted) > 0 {
-		if err := s.uploadManifest(ctx); err != nil {
-			// Log but don't fail - manifest is best-effort
-			s.log("Warning: failed to upload manifest: %v", err)
-		}
+	// The manifest carries the mtimes other devices restore, so a failure is
+	// reported rather than logged. The uploads that already succeeded stay
+	// recorded in state, and the flag makes the next push retry the manifest
+	// even when no file changed.
+	var manifestErr error
+	if len(result.Uploaded) > 0 || len(result.Deleted) > 0 || s.state.ManifestDirty {
+		manifestErr = s.pushManifest(ctx)
 	}
 
 	s.state.LastPush = time.Now()
 	s.state.LastSync = time.Now()
 	if err := s.state.Save(); err != nil {
 		return result, fmt.Errorf("failed to save state: %w", err)
+	}
+	if manifestErr != nil {
+		return result, manifestErr
 	}
 
 	return result, nil
@@ -389,8 +403,14 @@ func (s *Syncer) Pull(ctx context.Context) (*SyncResult, error) {
 		return result, nil
 	}
 
-	// Download manifest for mtime restoration (best-effort, may not exist)
-	manifest, _ := s.downloadManifest(ctx)
+	// Download the manifest for mtime restoration. A remote written before
+	// manifests existed simply has none; one that is listed but unreadable
+	// means we cannot restore mtimes correctly, so stop before touching any
+	// local file.
+	manifest, err := s.downloadManifest(ctx, manifestPresent(remoteObjects))
+	if err != nil {
+		return nil, err
+	}
 
 	// Build remote file map
 	remoteFiles, skipped := s.buildRemoteMap(remoteObjects)
@@ -840,6 +860,18 @@ func (s *Syncer) mergeRemote(ctx context.Context, relativePath string, remoteObj
 	return true, nil
 }
 
+// pushManifest publishes the mtime manifest and records whether the remote
+// copy is now current, so a failure is retried by the next push even if no
+// file changes in between.
+func (s *Syncer) pushManifest(ctx context.Context) error {
+	if err := s.uploadManifest(ctx); err != nil {
+		s.state.ManifestDirty = true
+		return err
+	}
+	s.state.ManifestDirty = false
+	return nil
+}
+
 // uploadManifest builds and uploads a manifest containing file mtimes from current state.
 func (s *Syncer) uploadManifest(ctx context.Context) error {
 	manifest := FileManifest{
@@ -882,16 +914,30 @@ func (s *Syncer) uploadManifest(ctx context.Context) error {
 	return nil
 }
 
+// manifestPresent reports whether the remote listing contains the manifest, so
+// a genuinely absent one can be told apart from one that failed to download.
+func manifestPresent(remoteObjects []storage.ObjectInfo) bool {
+	for _, obj := range remoteObjects {
+		if obj.Key == ManifestKey+".age" {
+			return true
+		}
+	}
+	return false
+}
+
 // downloadManifest downloads and parses the file manifest from remote storage.
-// Returns nil if no manifest exists (backward compatibility with older syncs).
-func (s *Syncer) downloadManifest(ctx context.Context) (*FileManifest, error) {
+// It returns (nil, nil) when the remote has no manifest at all, which is how
+// syncs written before manifests existed look; every other failure is an error.
+func (s *Syncer) downloadManifest(ctx context.Context, present bool) (*FileManifest, error) {
+	if !present {
+		return nil, nil
+	}
 	remoteKey := ManifestKey + ".age"
 
 	// Download
 	encrypted, err := s.storage.Download(ctx, remoteKey)
 	if err != nil {
-		// Manifest may not exist for older syncs - that's OK
-		return nil, nil
+		return nil, fmt.Errorf("failed to download manifest: %w", err)
 	}
 
 	// Decrypt

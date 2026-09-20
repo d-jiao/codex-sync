@@ -34,6 +34,10 @@ type SyncState struct {
 	DeviceID string                `json:"device_id"`
 	LastPush time.Time             `json:"last_push,omitempty"`
 	LastPull time.Time             `json:"last_pull,omitempty"`
+	// ManifestDirty records that the remote manifest is behind this state,
+	// because its upload failed. The next push retries it even when no file
+	// changed, so mtimes do not drift on the other devices.
+	ManifestDirty bool `json:"manifest_dirty,omitempty"`
 
 	// savePath is the custom path to save state to (if set)
 	savePath string     `json:"-"`
