@@ -49,6 +49,15 @@ type ConditionalDeleter interface {
 // because the remote object no longer matches the expected revision.
 var ErrPreconditionFailed = errors.New("remote object changed since it was last seen")
 
+// ObjectCopier is implemented by adapters that can duplicate an object inside
+// the bucket without moving its bytes through this process. Sync uses it to
+// keep a copy of an object it is about to delete; adapters that do not
+// implement it fall back to download-then-upload.
+type ObjectCopier interface {
+	// Copy duplicates srcKey to dstKey, overwriting dstKey if it exists.
+	Copy(ctx context.Context, srcKey, dstKey string) error
+}
+
 // Storage defines the interface for cloud storage operations
 type Storage interface {
 	// Upload stores data with the given key

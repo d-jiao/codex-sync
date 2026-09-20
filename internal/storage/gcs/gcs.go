@@ -22,6 +22,13 @@ func init() {
 	appstorage.NewGCS = New
 }
 
+// Sync reaches these capabilities through a type assertion, so a drifting
+// signature would silently disable them rather than fail to build.
+var (
+	_ appstorage.ConditionalDeleter = (*Client)(nil)
+	_ appstorage.ObjectCopier       = (*Client)(nil)
+)
+
 // Client implements the storage.Storage interface for Google Cloud Storage
 type Client struct {
 	client *storage.Client
@@ -191,6 +198,16 @@ func (c *Client) DeleteIfUnchanged(ctx context.Context, key, expectedVersion str
 			return fmt.Errorf("%w: %s", appstorage.ErrPreconditionFailed, key)
 		}
 		return fmt.Errorf("failed to delete %s: %w", key, err)
+	}
+	return nil
+}
+
+// Copy duplicates srcKey to dstKey inside the bucket, server-side.
+func (c *Client) Copy(ctx context.Context, srcKey, dstKey string) error {
+	src := c.client.Bucket(c.bucket).Object(srcKey)
+	dst := c.client.Bucket(c.bucket).Object(dstKey)
+	if _, err := dst.CopierFrom(src).Run(ctx); err != nil {
+		return fmt.Errorf("failed to copy %s to %s: %w", srcKey, dstKey, err)
 	}
 	return nil
 }

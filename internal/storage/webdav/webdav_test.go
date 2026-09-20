@@ -287,6 +287,78 @@ func TestDelete(t *testing.T) {
 	}
 }
 
+// Copy duplicates an object with the WebDAV COPY method. The destination has
+// to be an absolute, escaped URL, and its parent collections have to exist.
+func TestCopy(t *testing.T) {
+	var gotMethod, gotPath, gotDestination, gotOverwrite string
+	var madeCollections []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == "MKCOL" {
+			madeCollections = append(madeCollections, r.URL.Path)
+			w.WriteHeader(http.StatusCreated)
+			return
+		}
+		gotMethod = r.Method
+		gotPath = r.URL.EscapedPath()
+		gotDestination = r.Header.Get("Destination")
+		gotOverwrite = r.Header.Get("Overwrite")
+		w.WriteHeader(http.StatusCreated)
+	}))
+	defer server.Close()
+
+	client := &Client{
+		baseURL:    server.URL,
+		pathPrefix: "",
+		username:   "user",
+		password:   "pass",
+		httpClient: server.Client(),
+	}
+
+	if err := client.Copy(context.Background(), "notes/a b.age", "_trash/2026/notes/a b.age"); err != nil {
+		t.Fatalf("Copy() error = %v", err)
+	}
+	if gotMethod != "COPY" {
+		t.Errorf("method = %q, want COPY", gotMethod)
+	}
+	if gotPath != "/notes/a%20b.age" {
+		t.Errorf("request path = %q, want the escaped source key", gotPath)
+	}
+	want := server.URL + "/_trash/2026/notes/a%20b.age"
+	if gotDestination != want {
+		t.Errorf("Destination = %q, want %q", gotDestination, want)
+	}
+	if gotOverwrite != "T" {
+		t.Errorf("Overwrite = %q, want T", gotOverwrite)
+	}
+	if len(madeCollections) == 0 {
+		t.Error("expected the destination parent collections to be created")
+	}
+}
+
+// A server that refuses the copy must report it rather than let the caller
+// believe a backup exists.
+func TestCopyError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == "MKCOL" {
+			w.WriteHeader(http.StatusCreated)
+			return
+		}
+		w.WriteHeader(http.StatusInsufficientStorage)
+	}))
+	defer server.Close()
+
+	client := &Client{
+		baseURL:    server.URL,
+		username:   "user",
+		password:   "pass",
+		httpClient: server.Client(),
+	}
+
+	if err := client.Copy(context.Background(), "a.age", "_trash/a.age"); err == nil {
+		t.Error("expected an error when the server refuses the copy")
+	}
+}
+
 func TestDeleteBatch(t *testing.T) {
 	deleteCount := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

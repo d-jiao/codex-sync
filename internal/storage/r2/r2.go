@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
+	"strings"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awshttp "github.com/aws/aws-sdk-go-v2/aws/transport/http"
@@ -21,6 +23,13 @@ import (
 func init() {
 	storage.NewR2 = New
 }
+
+// Sync reaches these capabilities through a type assertion, so a drifting
+// signature would silently disable them rather than fail to build.
+var (
+	_ storage.ConditionalDeleter = (*Client)(nil)
+	_ storage.ObjectCopier       = (*Client)(nil)
+)
 
 // Client implements the storage.Storage interface for Cloudflare R2
 type Client struct {
@@ -221,6 +230,31 @@ func (c *Client) DeleteIfUnchanged(ctx context.Context, key, expectedVersion str
 		return fmt.Errorf("failed to delete %s: %w", key, err)
 	}
 	return nil
+}
+
+// Copy duplicates srcKey to dstKey inside the bucket without moving the bytes
+// through this process. CopySource is a URL path, so each segment of the key
+// is escaped; keys hold file names that legitimately contain spaces and "#".
+func (c *Client) Copy(ctx context.Context, srcKey, dstKey string) error {
+	_, err := c.client.CopyObject(ctx, &s3.CopyObjectInput{
+		Bucket:     aws.String(c.bucket),
+		Key:        aws.String(dstKey),
+		CopySource: aws.String(escapeCopySource(c.bucket, srcKey)),
+	})
+	if err != nil {
+		return fmt.Errorf("failed to copy %s to %s: %w", srcKey, dstKey, err)
+	}
+	return nil
+}
+
+// escapeCopySource builds the "bucket/key" value CopyObject expects, escaping
+// the key one path segment at a time so slashes survive.
+func escapeCopySource(bucket, key string) string {
+	segments := strings.Split(key, "/")
+	for i, segment := range segments {
+		segments[i] = url.PathEscape(segment)
+	}
+	return bucket + "/" + strings.Join(segments, "/")
 }
 
 // BucketExists checks if the configured bucket exists

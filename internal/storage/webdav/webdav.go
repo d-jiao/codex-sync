@@ -18,6 +18,13 @@ func init() {
 	storage.NewWebDAV = New
 }
 
+// Sync reaches these capabilities through a type assertion, so a drifting
+// signature would silently disable them rather than fail to build.
+var (
+	_ storage.ConditionalDeleter = (*Client)(nil)
+	_ storage.ObjectCopier       = (*Client)(nil)
+)
+
 // Client implements the storage.Storage interface for WebDAV (Nextcloud, ownCloud, etc.)
 type Client struct {
 	baseURL    string
@@ -216,6 +223,30 @@ func (c *Client) DeleteIfUnchanged(ctx context.Context, key, expectedVersion str
 	}
 	if resp.StatusCode != http.StatusNoContent && resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNotFound {
 		return fmt.Errorf("failed to delete %s: HTTP %d", key, resp.StatusCode)
+	}
+
+	return nil
+}
+
+// Copy duplicates srcKey to dstKey with the WebDAV COPY method, creating the
+// destination's parent collections first. The Destination header has to be an
+// absolute URI, escaped the same way request targets are.
+func (c *Client) Copy(ctx context.Context, srcKey, dstKey string) error {
+	if err := c.ensureParentDirs(ctx, dstKey); err != nil {
+		return fmt.Errorf("failed to create parent directories for %s: %w", dstKey, err)
+	}
+
+	resp, err := c.doRequest(ctx, "COPY", c.fullURL(srcKey), nil, map[string]string{
+		"Destination": c.fullURL(dstKey),
+		"Overwrite":   "T",
+	})
+	if err != nil {
+		return fmt.Errorf("failed to copy %s: %w", srcKey, err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusNoContent && resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("failed to copy %s to %s: HTTP %d", srcKey, dstKey, resp.StatusCode)
 	}
 
 	return nil
