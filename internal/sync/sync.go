@@ -440,28 +440,11 @@ func (s *Syncer) deleteRemoteObject(ctx context.Context, key, version string) er
 }
 
 // copyToRemoteTrash duplicates key under TrashPrefix/<batch>/ so a delete can
-// be undone by copying the object back. The copy is the stored ciphertext, so
-// it needs the same key to read as the original and adds no plaintext exposure.
-// Providers that cannot copy server-side, or refuse to, are served by moving
-// the bytes through this process instead.
+// be undone with 'codex-sync trash restore'. The copy is the stored
+// ciphertext, so it needs the same key to read as the original and adds no
+// plaintext exposure.
 func (s *Syncer) copyToRemoteTrash(ctx context.Context, key, batch string) error {
-	dst := TrashPrefix + batch + "/" + key
-
-	var copyErr error
-	if copier, ok := s.storage.(storage.ObjectCopier); ok {
-		if copyErr = copier.Copy(ctx, key, dst); copyErr == nil {
-			return nil
-		}
-	}
-
-	data, err := s.storage.Download(ctx, key)
-	if err != nil {
-		return errors.Join(copyErr, err)
-	}
-	if err := s.storage.Upload(ctx, dst, data); err != nil {
-		return errors.Join(copyErr, err)
-	}
-	return nil
+	return s.copyRemoteObject(ctx, key, TrashPrefix+batch+"/"+key)
 }
 
 func (s *Syncer) Pull(ctx context.Context) (*SyncResult, error) {

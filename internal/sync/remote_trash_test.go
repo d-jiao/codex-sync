@@ -307,3 +307,172 @@ func TestPushWithoutDeletesWritesNoRecycleBin(t *testing.T) {
 		t.Errorf("expected an empty recycle bin, got %v", keys)
 	}
 }
+
+// forcePushDelete removes relPath locally and pushes with deletes allowed,
+// returning the recycle-bin batch that captured it.
+func forcePushDelete(t *testing.T, env *testEnv, relPath string) string {
+	t.Helper()
+	if err := os.Remove(filepath.Join(env.claudeDir, relPath)); err != nil {
+		t.Fatal(err)
+	}
+	env.syncer.SetAllowRemoteDeletes(true)
+	result, err := env.syncer.Push(context.Background())
+	if err != nil {
+		t.Fatalf("push: %v", err)
+	}
+	if len(result.Errors) != 0 {
+		t.Fatalf("push errors: %v", result.Errors)
+	}
+	if result.TrashBatch == "" {
+		t.Fatal("expected a recycle-bin batch")
+	}
+	return result.TrashBatch
+}
+
+// Copies are only useful if they can be found, so the bin is listed as
+// batches with the counts and sizes needed to pick one.
+func TestListRemoteTrashGroupsByBatch(t *testing.T) {
+	env := setupTestEnv(t)
+	ctx := context.Background()
+
+	writeFile(t, env.claudeDir, "AGENTS.md", "# v1")
+	writeFile(t, env.claudeDir, "sessions/rollout-a.jsonl", `{"id":"a"}`)
+	if _, err := env.syncer.Push(ctx); err != nil {
+		t.Fatalf("push: %v", err)
+	}
+	batch := forcePushDelete(t, env, "AGENTS.md")
+
+	batches, err := env.syncer.ListRemoteTrash(ctx)
+	if err != nil {
+		t.Fatalf("list trash: %v", err)
+	}
+	if len(batches) != 1 {
+		t.Fatalf("expected one batch, got %+v", batches)
+	}
+	if batches[0].Batch != batch {
+		t.Errorf("batch = %q, want %q", batches[0].Batch, batch)
+	}
+	if batches[0].Files != 1 {
+		t.Errorf("files = %d, want 1", batches[0].Files)
+	}
+	if batches[0].Size <= 0 {
+		t.Errorf("size = %d, want the stored ciphertext size", batches[0].Size)
+	}
+	if batches[0].Deleted.IsZero() {
+		t.Error("batch should carry when the copies were written")
+	}
+}
+
+// An empty bin lists nothing rather than failing.
+func TestListRemoteTrashWithNothingInIt(t *testing.T) {
+	env := setupTestEnv(t)
+	batches, err := env.syncer.ListRemoteTrash(context.Background())
+	if err != nil {
+		t.Fatalf("list trash: %v", err)
+	}
+	if len(batches) != 0 {
+		t.Errorf("expected no batches, got %+v", batches)
+	}
+}
+
+// Restoring puts the object back under its original key, so the next pull
+// brings the file down again on every device.
+func TestRestoreRemoteTrashPutsObjectsBack(t *testing.T) {
+	env := setupTestEnv(t)
+	ctx := context.Background()
+
+	writeFile(t, env.claudeDir, "AGENTS.md", "# v1")
+	if _, err := env.syncer.Push(ctx); err != nil {
+		t.Fatalf("push: %v", err)
+	}
+	key := env.syncer.remoteKey("AGENTS.md")
+	original, err := env.store.Download(ctx, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	batch := forcePushDelete(t, env, "AGENTS.md")
+
+	restored, skipped, err := env.syncer.RestoreRemoteTrash(ctx, batch)
+	if err != nil {
+		t.Fatalf("restore: %v", err)
+	}
+	if len(skipped) != 0 {
+		t.Errorf("nothing was in the way, so nothing should be skipped: %v", skipped)
+	}
+	if len(restored) != 1 || restored[0] != "AGENTS.md" {
+		t.Fatalf("expected AGENTS.md restored, got %v", restored)
+	}
+	back, err := env.store.Download(ctx, key)
+	if err != nil {
+		t.Fatalf("the object should be back under its own key: %v", err)
+	}
+	if string(back) != string(original) {
+		t.Error("restored bytes differ from the original ciphertext")
+	}
+
+	peer := newPeer(t, env)
+	if _, err := peer.syncer.Pull(ctx); err != nil {
+		t.Fatalf("peer pull: %v", err)
+	}
+	if got := readFile(t, peer.claudeDir, "AGENTS.md"); got != "# v1" {
+		t.Errorf("peer should see the restored file, got %q", got)
+	}
+}
+
+// A restore must never overwrite a live object: the copy is older by
+// definition, and whatever is there now came from a device that still had it.
+func TestRestoreRemoteTrashKeepsALiveObject(t *testing.T) {
+	env := setupTestEnv(t)
+	ctx := context.Background()
+
+	writeFile(t, env.claudeDir, "AGENTS.md", "# v1")
+	if _, err := env.syncer.Push(ctx); err != nil {
+		t.Fatalf("push: %v", err)
+	}
+	batch := forcePushDelete(t, env, "AGENTS.md")
+
+	// Another device re-created the file after the delete.
+	peer := newPeer(t, env)
+	writeFile(t, peer.claudeDir, "AGENTS.md", "# newer from B")
+	if _, err := peer.syncer.Push(ctx); err != nil {
+		t.Fatalf("peer push: %v", err)
+	}
+
+	restored, skipped, err := env.syncer.RestoreRemoteTrash(ctx, batch)
+	if err != nil {
+		t.Fatalf("restore: %v", err)
+	}
+	if len(restored) != 0 {
+		t.Errorf("restored over a live object: %v", restored)
+	}
+	if len(skipped) != 1 || skipped[0] != "AGENTS.md" {
+		t.Fatalf("expected AGENTS.md skipped, got %v", skipped)
+	}
+	fresh := newPeer(t, env)
+	if _, err := fresh.syncer.Pull(ctx); err != nil {
+		t.Fatalf("pull: %v", err)
+	}
+	if got := readFile(t, fresh.claudeDir, "AGENTS.md"); got != "# newer from B" {
+		t.Errorf("the live version must win, got %q", got)
+	}
+}
+
+// A batch name that matches nothing is a mistake worth reporting rather than
+// a silent no-op.
+func TestRestoreRemoteTrashRejectsUnknownBatch(t *testing.T) {
+	env := setupTestEnv(t)
+	if _, _, err := env.syncer.RestoreRemoteTrash(context.Background(), "20260101-000000Z"); err == nil {
+		t.Error("expected an error for a batch that does not exist")
+	}
+}
+
+// The batch name comes from the user, so it must not be able to reach
+// outside the recycle bin.
+func TestRestoreRemoteTrashRejectsATraversingBatch(t *testing.T) {
+	env := setupTestEnv(t)
+	for _, batch := range []string{"../_metadata", "a/b", ""} {
+		if _, _, err := env.syncer.RestoreRemoteTrash(context.Background(), batch); err == nil {
+			t.Errorf("expected %q to be refused", batch)
+		}
+	}
+}

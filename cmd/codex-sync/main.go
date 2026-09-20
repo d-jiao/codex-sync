@@ -68,6 +68,7 @@ func main() {
 		statusCmd(),
 		diffCmd(),
 		conflictsCmd(),
+		trashCmd(),
 		resetCmd(),
 		updateCmd(),
 		changelogCmd(),
