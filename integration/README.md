@@ -1,12 +1,13 @@
 # Integration tests
 
 Tests in this directory run against **real storage** and are gated behind the
-`integration` build tag, so `make test` and CI never run them. There are three:
+`integration` build tag, so `make test` and CI never run them. There are four:
 
 | What | File | Needs |
 |---|---|---|
 | Two-device sync through a real R2 bucket | `r2_sync_test.go` | R2 credentials (and Docker for the multi-container variant) |
 | Whether the endpoint enforces a conditional delete | `conditional_delete_test.go` | R2 (or S3-compatible) credentials |
+| Whether the endpoint can copy an object (the recycle bin) | `object_copy_test.go` | R2 (or S3-compatible) credentials |
 | Thread-listing comparison between two Codex homes | `codex_listing_check.py` | a local Codex engine binary |
 
 > **Known gap:** `r2_sync_test.go` still writes claude-sync-era fixtures
@@ -43,6 +44,18 @@ at each endpoint you sync against, including MinIO or another self-hosted
 S3 implementation. A failure here is a property of that server, not a
 regression in codex-sync — the version re-read in `push --force` still holds —
 but it tells you the second line of defence is absent there.
+
+### Object-copy conformance
+
+Before `push --force` deletes anything it copies the object to
+`_trash/<batch>/`, so the copy is the part of the guarantee that has to work.
+`object_copy_test.go` exercises the adapter's server-side copy against the real
+endpoint with a key containing a space and a `#`, then checks the copy matches
+byte for byte and the original is still there. This is the only cover the
+S3/R2 `CopyObject` path gets; the in-memory store used by the unit tests cannot
+tell you whether a given service accepts the `CopySource` we build. A failure
+does not make deletion unsafe — sync falls back to download-then-upload — but
+it means every deleted file is paid for twice on the wire.
 
 ### Docker variant
 
