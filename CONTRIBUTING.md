@@ -57,6 +57,7 @@ mkdir -p /tmp/cs-sandbox && HOME=/tmp/cs-sandbox ./bin/codex-sync init
 | `internal/paths/` | `codex-sync paths` (sync_paths / exclude editing) |
 | `integration/` | real-storage tests (build tag `integration`) and the manual acceptance script |
 | `scripts/launchd/` | the daily launchd agent template |
+| `scripts/release-notes.sh` | extracts one version's CHANGELOG section for the release workflow |
 | `docs/` | design specs and the security model |
 
 ## Making a change
@@ -130,6 +131,38 @@ integration/codex_listing_check.py --source /path/to/copy-of-home \
 
 It exits 2 with `codex engine binary not found` when no engine can be started
 (set `--codex-bin` or `CODEX_BIN`).
+
+## Cutting a release
+
+Releases are driven by the tag. Move the accumulated **Unreleased** entries in
+`CHANGELOG.md` under a `## [X.Y.Z] - YYYY-MM-DD` heading, leave a fresh empty
+**Unreleased** above it, commit, then:
+
+```bash
+git tag -a vX.Y.Z -m "codex-sync vX.Y.Z"
+git push origin main --follow-tags
+```
+
+`.github/workflows/release.yml` takes it from there: it extracts the changelog
+section for the tag, runs `make check`, cross-compiles the six platform
+binaries with `VERSION` set to the tag, verifies the built binary reports that
+version and that `checksums.txt` matches, then publishes the GitHub release with
+every binary and `checksums.txt` attached.
+
+Three things the workflow deliberately refuses to do. It fails before building
+if the tag has no changelog section with content, so an undocumented release
+cannot ship. It fails if the binaries do not report the tag version, which
+catches broken `VERSION` plumbing. And a tag containing a hyphen
+(`v0.2.0-rc.1`) is published as a prerelease, because `codex-sync update`
+follows the `releases/latest` endpoint and GitHub excludes prereleases from it.
+
+The release assets are the update mechanism: `codex-sync update` looks for an
+asset named exactly `codex-sync-<goos>-<goarch>` (plus `.exe` on Windows) and
+verifies it against the `checksums.txt` asset, aborting on a mismatch and only
+warning when checksums are absent. Renaming an asset breaks self-update.
+
+To rehearse without publishing, run `scripts/release-notes.sh vX.Y.Z` to see the
+notes and `make build-all VERSION=vX.Y.Z` to produce `bin/` locally.
 
 ## Relationship to claude-sync
 

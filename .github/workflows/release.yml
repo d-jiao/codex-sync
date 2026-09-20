@@ -1,0 +1,85 @@
+name: Release
+
+# Publishing is driven entirely by the tag: push v1.2.3 and this builds every
+# platform, verifies the binaries, and creates the GitHub release that
+# `codex-sync update` reads. A tag whose version has no CHANGELOG section fails
+# before anything is built.
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Setup Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: '1.24'
+
+      - name: Download dependencies
+        run: go mod download
+
+      # Fail fast: cheaper than discovering after a six-platform build.
+      - name: Compose release notes
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          scripts/release-notes.sh "$TAG" > release-notes.md
+          cat .github/release-install-notes.md >> release-notes.md
+          echo "Release notes:"
+          cat release-notes.md
+
+      - name: Run checks
+        run: make check
+
+      - name: Build release binaries
+        env:
+          TAG: ${{ github.ref_name }}
+        run: make build-all VERSION="$TAG"
+
+      - name: Verify the binaries carry the tag version
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          reported=$(./bin/codex-sync-linux-amd64 --version)
+          echo "$reported"
+          case "$reported" in
+            *"$TAG") ;;
+            *) echo "::error::binary reports '$reported', expected version $TAG"; exit 1 ;;
+          esac
+
+      - name: Verify checksums
+        run: cd bin && sha256sum -c checksums.txt
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          # A tag like v0.2.0-rc.1 must not become "latest", because that is
+          # the endpoint `codex-sync update` follows.
+          prerelease=""
+          case "$TAG" in
+            *-*) prerelease="--prerelease" ;;
+          esac
+          gh release create "$TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "$TAG" \
+            --notes-file release-notes.md \
+            $prerelease \
+            bin/codex-sync-darwin-arm64 \
+            bin/codex-sync-darwin-amd64 \
+            bin/codex-sync-linux-amd64 \
+            bin/codex-sync-linux-arm64 \
+            bin/codex-sync-windows-amd64.exe \
+            bin/codex-sync-windows-arm64.exe \
+            bin/checksums.txt

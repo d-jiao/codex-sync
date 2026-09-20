@@ -33,7 +33,11 @@ lint:
 
 # Build for multiple platforms
 build-all: build-darwin build-linux build-windows
-	cd $(BUILD_DIR) && shasum -a 256 $(BINARY_NAME)-* > checksums.txt
+	cd $(BUILD_DIR) && if command -v shasum >/dev/null 2>&1; then \
+		shasum -a 256 $(BINARY_NAME)-*; \
+	else \
+		sha256sum $(BINARY_NAME)-*; \
+	fi > checksums.txt
 
 build-darwin:
 	GOOS=darwin GOARCH=arm64 $(GO) build $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_NAME)-darwin-arm64 ./cmd/codex-sync
