@@ -1,11 +1,12 @@
 # Integration tests
 
 Tests in this directory run against **real storage** and are gated behind the
-`integration` build tag, so `make test` and CI never run them. There are two:
+`integration` build tag, so `make test` and CI never run them. There are three:
 
 | What | File | Needs |
 |---|---|---|
 | Two-device sync through a real R2 bucket | `r2_sync_test.go` | R2 credentials (and Docker for the multi-container variant) |
+| Whether the endpoint enforces a conditional delete | `conditional_delete_test.go` | R2 (or S3-compatible) credentials |
 | Thread-listing comparison between two Codex homes | `codex_listing_check.py` | a local Codex engine binary |
 
 > **Known gap:** `r2_sync_test.go` still writes claude-sync-era fixtures
@@ -30,6 +31,18 @@ go test -tags=integration -v ./integration/...
 ```
 
 Without credentials the tests skip.
+
+### Conditional-delete conformance
+
+`push --force` sends deletes conditional on the object's version, but not every
+S3-compatible server enforces `If-Match` on a DELETE; some accept the header and
+remove the object anyway. `conditional_delete_test.go` measures what your
+endpoint actually does: it uploads a sentinel, asks for a delete conditional on
+a version the object never had, and checks whether the object survived. Point it
+at each endpoint you sync against, including MinIO or another self-hosted
+S3 implementation. A failure here is a property of that server, not a
+regression in codex-sync — the version re-read in `push --force` still holds —
+but it tells you the second line of defence is absent there.
 
 ### Docker variant
 
