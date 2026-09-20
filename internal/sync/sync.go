@@ -319,7 +319,9 @@ func (s *Syncer) Push(ctx context.Context) (*SyncResult, error) {
 // only reports them. With --force each object is removed one at a time, and
 // only while it still matches the revision this device last saw, so a copy
 // another device updated in the meantime survives a deletion decided from
-// stale local state.
+// stale local state. The revision is checked again just before each delete
+// and once more by the provider itself, so the window in which a concurrent
+// upload can be lost is a single round trip rather than the whole batch.
 func (s *Syncer) applyDeletes(ctx context.Context, deletes []FileChange, result *SyncResult) {
 	if !s.allowRemoteDeletes {
 		for _, change := range deletes {
@@ -328,9 +330,9 @@ func (s *Syncer) applyDeletes(ctx context.Context, deletes []FileChange, result 
 		return
 	}
 
-	// One listing gives both the current revisions and the answer to "is it
-	// even still there", without a per-file Head whose not-found error every
-	// provider spells differently.
+	// One listing answers "is it even still there" without a per-file Head
+	// whose not-found error every provider spells differently; the revision it
+	// reports is refreshed per object below.
 	remoteObjects, err := s.storage.List(ctx, "")
 	if err != nil {
 		result.Errors = append(result.Errors, fmt.Errorf("failed to list remote objects before deleting: %w", err))
@@ -352,6 +354,22 @@ func (s *Syncer) applyDeletes(ctx context.Context, deletes []FileChange, result 
 			s.state.RemoveFile(change.Path)
 			result.Deleted = append(result.Deleted, change.Path)
 			continue
+		}
+
+		// Re-read the revision immediately before removing the object. The
+		// listing can be minutes old by the time a long batch reaches this
+		// entry, and some S3-compatible servers accept If-Match on a DELETE
+		// and then disregard it, which leaves this comparison as the only
+		// thing between a stale local decision and another device's upload.
+		// A failed Head is not fatal: the listing remains a weaker guard.
+		if fresh, err := s.storage.Head(ctx, key); err == nil && fresh != nil {
+			// Keep the listed revision if Head reports none, rather than
+			// downgrading the delete to an unconditional one.
+			if fresh.Version != "" || obj.Version == "" {
+				refreshed := *fresh
+				refreshed.Key = key
+				obj = refreshed
+			}
 		}
 
 		if remoteChanged(obj, s.state.GetFile(change.Path)) {

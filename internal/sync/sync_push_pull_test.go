@@ -36,6 +36,13 @@ type mockStorage struct {
 	// onDelete runs inside DeleteIfUnchanged, before the precondition is
 	// evaluated, so tests can simulate another device replacing the object.
 	onDelete func(key string)
+	// afterList runs once List has released the lock, so tests can simulate
+	// the remote moving on between a listing and the requests based on it.
+	afterList func()
+	// ignorePreconditions makes DeleteIfUnchanged delete whatever the expected
+	// revision says, standing in for the S3-compatible servers that accept
+	// If-Match on a DELETE and then disregard it.
+	ignorePreconditions bool
 	// downloadErr, when set for a key, makes Download fail.
 	downloadErr map[string]error
 	// uploadErr, when set for a key, makes Upload fail.
@@ -113,7 +120,6 @@ func (m *mockStorage) DeleteBatch(_ context.Context, keys []string) error {
 
 func (m *mockStorage) List(_ context.Context, prefix string) ([]storage.ObjectInfo, error) {
 	m.mu.Lock()
-	defer m.mu.Unlock()
 	var result []storage.ObjectInfo
 	for key, obj := range m.objects {
 		if strings.HasPrefix(key, prefix) {
@@ -125,6 +131,11 @@ func (m *mockStorage) List(_ context.Context, prefix string) ([]storage.ObjectIn
 				Version:      obj.version,
 			})
 		}
+	}
+	hook := m.afterList
+	m.mu.Unlock()
+	if hook != nil {
+		hook()
 	}
 	return result, nil
 }
@@ -157,7 +168,7 @@ func (m *mockStorage) DeleteIfUnchanged(_ context.Context, key, expectedVersion 
 	if !ok {
 		return nil
 	}
-	if expectedVersion == "" || obj.version != expectedVersion {
+	if !m.ignorePreconditions && (expectedVersion == "" || obj.version != expectedVersion) {
 		return fmt.Errorf("%w: %s", storage.ErrPreconditionFailed, key)
 	}
 	delete(m.objects, key)

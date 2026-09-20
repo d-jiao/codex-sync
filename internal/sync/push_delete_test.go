@@ -149,3 +149,40 @@ func TestForcedPushForgetsFileAlreadyGoneFromRemote(t *testing.T) {
 		t.Error("state should no longer track a file that is gone on both sides")
 	}
 }
+
+// Not every S3-compatible server honours If-Match on a DELETE; some accept the
+// header and remove the object anyway. The revision is therefore re-read
+// immediately before each delete, so a copy another device uploaded after the
+// listing survives even when the precondition is worthless.
+func TestForcedPushRereadsRevisionWhenPreconditionsAreIgnored(t *testing.T) {
+	env := setupTestEnv(t)
+	ctx := context.Background()
+	env.syncer.SetAllowRemoteDeletes(true)
+	env.store.ignorePreconditions = true
+
+	writeFile(t, env.claudeDir, "AGENTS.md", "# v1")
+	if _, err := env.syncer.Push(ctx); err != nil {
+		t.Fatalf("push: %v", err)
+	}
+	if err := os.Remove(filepath.Join(env.claudeDir, "AGENTS.md")); err != nil {
+		t.Fatal(err)
+	}
+
+	// Another device replaces the object after the delete listing was taken.
+	key := env.syncer.remoteKey("AGENTS.md")
+	env.store.afterList = func() { env.store.setVersion(key, "written-by-peer") }
+
+	result, err := env.syncer.Push(ctx)
+	if err != nil {
+		t.Fatalf("push: %v", err)
+	}
+	if len(result.Deleted) != 0 {
+		t.Errorf("deleted a revision this device never saw: %v", result.Deleted)
+	}
+	if len(result.Errors) != 1 {
+		t.Fatalf("expected one delete-conflict error, got %v", result.Errors)
+	}
+	if objs, _ := env.store.ListUserObjects(ctx); len(objs) != 1 {
+		t.Errorf("the peer's object must survive, got %d objects", len(objs))
+	}
+}
