@@ -84,6 +84,9 @@ type SyncResult struct {
 	// UnverifiedDeletes are removed remote objects the provider reported no
 	// revision for, so the delete could only be guarded by timestamps.
 	UnverifiedDeletes []string
+	// TrashBatch names the recycle-bin batch holding copies of the objects
+	// this push removed, empty when it removed none.
+	TrashBatch string
 }
 
 type ProgressEvent struct {
@@ -331,6 +334,11 @@ func (s *Syncer) Push(ctx context.Context) (*SyncResult, error) {
 // stale local state. The revision is checked again just before each delete
 // and once more by the provider itself, so the window in which a concurrent
 // upload can be lost is a single round trip rather than the whole batch.
+//
+// Those checks narrow the window but cannot close it: a server that accepts
+// If-Match on a DELETE and ignores it can still lose the race. Every object
+// is therefore copied into the recycle bin before it is removed, and a delete
+// whose copy could not be written does not happen at all.
 func (s *Syncer) applyDeletes(ctx context.Context, deletes []FileChange, result *SyncResult) {
 	if !s.allowRemoteDeletes {
 		for _, change := range deletes {
@@ -352,6 +360,7 @@ func (s *Syncer) applyDeletes(ctx context.Context, deletes []FileChange, result 
 		byKey[obj.Key] = obj
 	}
 
+	batch := time.Now().UTC().Format("20060102-150405Z")
 	total := len(deletes)
 	for i, change := range deletes {
 		s.progress(ProgressEvent{Action: "delete", Path: change.Path, Current: i + 1, Total: total})
@@ -388,6 +397,17 @@ func (s *Syncer) applyDeletes(ctx context.Context, deletes []FileChange, result 
 			continue
 		}
 
+		// Keep a copy before removing anything. This is the part of the
+		// guarantee that does not depend on the provider honouring a
+		// precondition, so a failure here cancels the delete.
+		if err := s.copyToRemoteTrash(ctx, key, batch); err != nil {
+			result.Errors = append(result.Errors, fmt.Errorf(
+				"%s: could not copy the remote file to %s%s/ before deleting it, so it was left alone: %w",
+				change.Path, TrashPrefix, batch, err))
+			continue
+		}
+		result.TrashBatch = batch
+
 		if err := s.deleteRemoteObject(ctx, key, obj.Version); err != nil {
 			if errors.Is(err, storage.ErrPreconditionFailed) {
 				result.Errors = append(result.Errors, fmt.Errorf(
@@ -417,6 +437,31 @@ func (s *Syncer) deleteRemoteObject(ctx context.Context, key, version string) er
 		return cd.DeleteIfUnchanged(ctx, key, version)
 	}
 	return s.storage.Delete(ctx, key)
+}
+
+// copyToRemoteTrash duplicates key under TrashPrefix/<batch>/ so a delete can
+// be undone by copying the object back. The copy is the stored ciphertext, so
+// it needs the same key to read as the original and adds no plaintext exposure.
+// Providers that cannot copy server-side, or refuse to, are served by moving
+// the bytes through this process instead.
+func (s *Syncer) copyToRemoteTrash(ctx context.Context, key, batch string) error {
+	dst := TrashPrefix + batch + "/" + key
+
+	var copyErr error
+	if copier, ok := s.storage.(storage.ObjectCopier); ok {
+		if copyErr = copier.Copy(ctx, key, dst); copyErr == nil {
+			return nil
+		}
+	}
+
+	data, err := s.storage.Download(ctx, key)
+	if err != nil {
+		return errors.Join(copyErr, err)
+	}
+	if err := s.storage.Upload(ctx, dst, data); err != nil {
+		return errors.Join(copyErr, err)
+	}
+	return nil
 }
 
 func (s *Syncer) Pull(ctx context.Context) (*SyncResult, error) {

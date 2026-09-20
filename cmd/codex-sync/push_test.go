@@ -66,3 +66,23 @@ func TestPrintUnverifiedDeletes(t *testing.T) {
 		t.Errorf("output should explain the weaker guarantee: %q", out)
 	}
 }
+
+func TestPrintRemoteTrashBatch(t *testing.T) {
+	var buf bytes.Buffer
+	printRemoteTrashBatch(&buf, "", 0)
+	if buf.Len() != 0 {
+		t.Fatalf("expected no output when nothing was deleted, got %q", buf.String())
+	}
+
+	printRemoteTrashBatch(&buf, "20260920-141500Z", 3)
+	out := buf.String()
+	if !strings.Contains(out, "20260920-141500Z") {
+		t.Errorf("output should name the batch so it can be found: %q", out)
+	}
+	if !strings.Contains(out, "_trash/") {
+		t.Errorf("output should name the prefix the copies live under: %q", out)
+	}
+	if !strings.Contains(out, "3") {
+		t.Errorf("output should say how many copies were kept: %q", out)
+	}
+}

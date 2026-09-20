@@ -46,6 +46,9 @@ type mockStorage struct {
 	// omitVersions blanks every reported revision, standing in for a WebDAV
 	// server that returns no ETag.
 	omitVersions bool
+	// copyErr, when set, makes Copy fail, standing in for a bucket that
+	// refuses the server-side copy.
+	copyErr error
 	// downloadErr, when set for a key, makes Download fail.
 	downloadErr map[string]error
 	// uploadErr, when set for a key, makes Upload fail.
@@ -186,6 +189,29 @@ func (m *mockStorage) DeleteIfUnchanged(_ context.Context, key, expectedVersion 
 	return nil
 }
 
+// Copy implements storage.ObjectCopier, duplicating the stored bytes the way
+// a server-side copy does.
+func (m *mockStorage) Copy(_ context.Context, srcKey, dstKey string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.copyErr != nil {
+		return m.copyErr
+	}
+	obj, ok := m.objects[srcKey]
+	if !ok {
+		return fmt.Errorf("object not found: %s", srcKey)
+	}
+	cp := make([]byte, len(obj.data))
+	copy(cp, obj.data)
+	m.nextVersion++
+	m.objects[dstKey] = mockObject{
+		data:         cp,
+		lastModified: m.modTime(),
+		version:      fmt.Sprintf("v%d", m.nextVersion),
+	}
+	return nil
+}
+
 // setVersion replaces an object's revision without changing its bytes or
 // timestamp, standing in for another device overwriting it.
 func (m *mockStorage) setVersion(key, version string) {
@@ -203,7 +229,8 @@ func (m *mockStorage) BucketExists(_ context.Context) (bool, error) {
 	return true, nil
 }
 
-// ListUserObjects returns objects excluding metadata (_metadata/) and external (_external/) files.
+// ListUserObjects returns objects excluding metadata (_metadata/), external
+// (_external/) files and recycle-bin copies (_trash/).
 // Use this in tests to count only actual synced user files.
 func (m *mockStorage) ListUserObjects(ctx context.Context) ([]storage.ObjectInfo, error) {
 	objs, err := m.List(ctx, "")
@@ -212,7 +239,8 @@ func (m *mockStorage) ListUserObjects(ctx context.Context) ([]storage.ObjectInfo
 	}
 	var result []storage.ObjectInfo
 	for _, obj := range objs {
-		if strings.HasPrefix(obj.Key, "_metadata/") || strings.HasPrefix(obj.Key, "_external/") {
+		if strings.HasPrefix(obj.Key, "_metadata/") || strings.HasPrefix(obj.Key, "_external/") ||
+			strings.HasPrefix(obj.Key, TrashPrefix) {
 			continue
 		}
 		result = append(result, obj)

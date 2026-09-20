@@ -1123,6 +1123,7 @@ last synced is still kept, and reported instead.`,
 				}
 				printPendingDeletes(os.Stdout, result.PendingDeletes)
 				printUnverifiedDeletes(os.Stdout, result.UnverifiedDeletes)
+				printRemoteTrashBatch(os.Stdout, result.TrashBatch, len(result.Deleted))
 			}
 
 			return reportSyncErrors(cmd, os.Stderr, result.Errors)
@@ -1173,6 +1174,20 @@ func printUnverifiedDeletes(w io.Writer, unverified []string) {
 	}
 	_, _ = fmt.Fprintf(w, "  Your storage reports no version for these objects, so a copy another\n")
 	_, _ = fmt.Fprintf(w, "  device uploaded in the last moments may have been removed with them.\n")
+}
+
+// printRemoteTrashBatch points at the copies a forced push kept of everything
+// it removed. The version checks that guard a delete can be defeated by a
+// server that ignores preconditions, so the copies are what makes a wrong
+// deletion recoverable — and they are only useful if the user knows they exist.
+func printRemoteTrashBatch(w io.Writer, batch string, deleted int) {
+	if batch == "" || deleted == 0 {
+		return
+	}
+	_, _ = fmt.Fprintf(w, "\n%s✓%s Copies of the %d deleted file(s) are in %s%s%s/ on the remote.\n",
+		colorGreen, colorReset, deleted, colorBold, sync.TrashPrefix+batch, colorReset)
+	_, _ = fmt.Fprintf(w, "  %sThey stay until you remove them or a bucket lifecycle rule expires them.%s\n",
+		colorDim, colorReset)
 }
 
 func pullCmd() *cobra.Command {
