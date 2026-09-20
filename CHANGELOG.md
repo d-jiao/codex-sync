@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-09-20
+
 ### Added
 
 - Release workflow (`.github/workflows/release.yml`): pushing a `v*` tag cross-compiles the six platform binaries with the tag as the version, verifies the built binary reports it and that `checksums.txt` matches, and publishes the GitHub release that `codex-sync update` reads. A tag whose version has no CHANGELOG section fails before anything is built, and a tag containing a hyphen (`v0.2.0-rc.1`) is published as a prerelease so it does not become `releases/latest`.
