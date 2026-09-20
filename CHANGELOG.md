@@ -14,6 +14,8 @@
 - `push`/`pull` print errors to stderr even with `-q` and exit non-zero when any file failed.
 - `codex-sync desktop refresh` and `pull --desktop`: make pulled threads visible in the ChatGPT desktop app (engine re-index, names from `session_index.jsonl`, full catalog sweep on next launch), with a database backup first; refuses while the app is running.
 - `push --force`: delete the remote copies of files deleted locally. Without it, push lists them and leaves them in storage.
+- Remote recycle bin: `push --force` copies every object it deletes to `_trash/<batch>/` in the bucket before removing it, and abandons a delete whose copy cannot be written. Copies are the stored ciphertext and are excluded from every listing pull works from, so they are never downloaded as files and a bucket holding only copies still counts as empty.
+- `codex-sync trash list` and `codex-sync trash restore <batch>`: find the copies a forced push kept and put them back under their original keys. A key that is live again is left alone and reported. Nothing prunes the bin automatically; use a lifecycle rule on the `_trash/` prefix or delete batches yourself.
 - Per-file remote version tracking (`remote_version` in `state.json`): the provider's ETag or generation decides whether a remote object changed, falling back to timestamps when a provider does not supply one. Old state files load unchanged.
 
 ### Changed

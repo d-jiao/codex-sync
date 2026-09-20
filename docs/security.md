@@ -61,6 +61,7 @@ changing it would silently derive a different key on every existing install.
 | `~/.codex-sync/age-key.txt` | the age identity (derived or random) | `0600` |
 | `~/.codex-sync/state.json` | per-file hashes, sizes, mtimes, remote versions, sync times | `0600` |
 | `~/.codex-sync/trash/`, `db-backup-*/` | files pull removed; database copies from `desktop refresh` | `0700` dirs, `0600` files |
+| `_trash/<batch>/` (remote) | encrypted copies of files `push --force` deleted, kept until pruned | bucket permissions |
 | downloaded files under `~/.codex` | decrypted content | `0700` dirs, `0600` files |
 | `~/.codex.backup.<timestamp>` | first-pull backup of pre-existing files, filtered by the configured excludes | `0700` / `0600` |
 
@@ -101,7 +102,14 @@ are not copied into `~/.codex.backup.<timestamp>` either.
   cannot erase everyone else's copy. Not every S3-compatible server enforces
   `If-Match` on a DELETE, so the version re-read — not the header — is the
   guard that has to hold; storage that reports no version leaves only
-  timestamps, and push names those deletes in its output.
+  timestamps, and push names those deletes in its output. Because neither
+  guard is airtight, every object a forced push removes is first copied to
+  `_trash/<batch>/` in the same bucket, and a delete whose copy cannot be
+  written is abandoned. The copies are the stored ciphertext, so they need the
+  same age key to read and widen no exposure; `codex-sync trash restore`
+  puts a batch back. Nothing expires them: prune old batches yourself or with
+  a lifecycle rule on the `_trash/` prefix, and remember `reset --remote`
+  deletes them too.
 - **Self-update.** `codex-sync update` downloads a release binary over HTTPS
   from this repository's GitHub Releases and verifies it against the release's
   `checksums.txt` when one is published (audit M2). Releases without checksums

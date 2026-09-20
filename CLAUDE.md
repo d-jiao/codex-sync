@@ -65,12 +65,20 @@ Layered, with a pluggable storage abstraction:
 ~/.codex/        # what gets synced (see config.SyncPaths)
 ```
 
+```
+<bucket>/<prefix>/       # remote layout
+├── <path tokens>/*.age  # the synced objects
+├── _metadata/manifest.json.age  # mtimes
+└── _trash/<batch>/<key> # copies `push --force` took before deleting, still encrypted
+```
+
 ### Sync semantics
 
 - **Remote keys** are local paths with `.age` appended (home-relative-tokenized; a no-op in practice, since rollout filenames carry dates and UUIDs rather than paths).
 - **Push** encrypts only files whose current hash differs from state. It stats the file before reading, hashes exactly the bytes it read, and re-stats after the upload; if Codex appended in between, the file is left unsynced so a partial upload is never recorded as current.
 - **Remote identity** lives in `FileState.RemoteVersion` (`remote_version`, omitted when empty so old state files load unchanged): the provider's ETag, or the GCS generation. `remoteChanged` compares versions when both sides have one and falls back to `LastModified` vs. `Uploaded` otherwise, which keeps coarse or skewed timestamps from hiding a remote update.
 - **Remote deletion is opt-in.** `Syncer.allowRemoteDeletes` (CLI: `push --force`) is false by default; `applyDeletes` otherwise only records `SyncResult.PendingDeletes` for the CLI to print. With the flag, it re-lists the remote first: an object already gone drops out of state, one that `remoteChanged` reports as replaced becomes a conflict error and stays, and the rest go through `deleteRemoteObject`, which uses `storage.ConditionalDeleter.DeleteIfUnchanged` when the adapter supports it and the version is known.
+- **The remote recycle bin.** Before each forced delete, `copyToRemoteTrash` duplicates the object to `_trash/<batch>/<key>` (`TrashPrefix`), preferring `storage.ObjectCopier` and falling back to download-then-upload; a failed copy cancels that delete. `liveObjects` strips the prefix from the listings behind `Pull`, `PreviewPull` and `Diff` **before** the empty-remote guard, so copies are never pulled as files and a bucket holding only copies still reads as empty. `ListRemoteTrash`/`RestoreRemoteTrash` (CLI: `codex-sync trash list|restore`) put a batch back, skipping keys that are live again. Nothing prunes the bin.
 - **Pull** downloads when the local file is missing, or when `remoteChanged` says the remote object moved on. If the local hash **also** differs from state (both sides changed), it's a **conflict**: local is kept, remote is written to `<path>.conflict.<timestamp>`. `codex-sync conflicts` resolves them (and updates state on resolution). Sidecars are local artifacts: `*.conflict.*` is a hard exclude and `handleConflict` drops the sidecar's state entry, so they are never uploaded, tracked, or trashed by a later pull — and **push skips a file that still has a live sidecar**, reporting `unresolved conflict for <path>` instead of overwriting the remote.
 - **All pull writes go through `safeio.go`**: `safeLocalPath` rejects an absolute or `..` path, a component that is not a directory, and any symlink on the way (including the destination itself); `writeLocalFileAtomic` re-validates after `MkdirAll` and renames a temporary file into place; `uniqueConflictPath` suffixes `-1`, `-2`… so two conflicts in the same second do not overwrite each other.
 - **Manifest failures are loud**: `downloadManifest` returns `(nil, nil)` only when the manifest is absent from the remote listing (a legacy remote). If it is listed but cannot be downloaded, decrypted or parsed, `Pull` fails before writing anything. A failed manifest upload still saves the file-upload state and sets `SyncState.ManifestDirty`, which the next push retries even when nothing else changed.

@@ -251,6 +251,7 @@ codex-sync conflicts          # list and resolve conflicts
 | `diff` | Show differences between local and remote |
 | `conflicts` | List and resolve `.conflict.*` sidecars |
 | `paths` | Manage sync paths and exclude filters |
+| `trash` | List (`trash list`) or restore (`trash restore <batch>`) remote copies of files a forced push deleted |
 | `reset` | Remove local config, key and sync state (keeps `trash/`) |
 | `update` | Update to the latest release (verifies `checksums.txt`) |
 | `changelog` | Show release history |
@@ -375,6 +376,32 @@ only be guarded by timestamps, and those deletes are listed separately:
   Your storage reports no version for these objects, so a copy another
   device uploaded in the last moments may have been removed with them.
 ```
+
+Those checks narrow the race with another device but cannot close it, so
+every object a forced push removes is copied to `_trash/<batch>/` in the same
+bucket first, still encrypted. A delete whose copy cannot be written does not
+happen at all:
+
+```
+✓ Copies of the 2 deleted file(s) are in _trash/20260920-141500Z/ on the remote.
+  They stay until you remove them or a bucket lifecycle rule expires them.
+```
+
+Those copies are outside the sync set: pull never downloads them, and a bucket
+holding nothing else still counts as empty, so it cannot delete anything
+locally. To undo a deletion:
+
+```bash
+codex-sync trash list                        # batches, with counts and sizes
+codex-sync trash restore 20260920-141500Z    # copy them back to their keys
+codex-sync pull                              # bring the files down again
+```
+
+Restoring skips any file another device has re-created since — that newer
+version wins — and reports what it left alone. Nothing prunes the recycle bin
+automatically; delete old batches yourself, or give the `_trash/` prefix a
+lifecycle rule (R2, S3 and GCS all support expiry by age) so copies age out
+after, say, 30 days. `reset --remote` removes them along with everything else.
 
 ### Pull
 
