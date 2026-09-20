@@ -35,6 +35,12 @@ const maxDecompressedSize = 500 * 1024 * 1024
 // ManifestKey is the remote storage key for file metadata (mtimes).
 const ManifestKey = "_metadata/manifest.json"
 
+// TrashPrefix is the remote key prefix under which a forced push keeps a copy
+// of every object it removes, so a deletion decided from stale state can be
+// undone. Copies are ordinary encrypted objects, so they must be kept out of
+// every listing the sync set is built from.
+const TrashPrefix = "_trash/"
+
 // FileManifest stores metadata about synced files, primarily mtimes.
 type FileManifest struct {
 	Files map[string]FileMetadata `json:"files"`
@@ -418,11 +424,14 @@ func (s *Syncer) Pull(ctx context.Context) (*SyncResult, error) {
 
 	s.progress(ProgressEvent{Action: "scan", Path: "Fetching remote file list..."})
 
-	// List all remote objects
+	// List all remote objects. Recycle-bin copies are dropped here, before the
+	// empty-remote guard, so a bucket whose live objects are all gone still
+	// counts as empty and cannot delete anything locally.
 	remoteObjects, err := s.storage.List(ctx, "")
 	if err != nil {
 		return nil, fmt.Errorf("failed to list remote objects: %w", err)
 	}
+	remoteObjects = liveObjects(remoteObjects)
 
 	if len(remoteObjects) == 0 {
 		s.progress(ProgressEvent{Action: "scan", Complete: true})
@@ -1000,6 +1009,21 @@ func (s *Syncer) localPath(remoteKey string) (string, bool) {
 	return s.paths.ResolveRelPath(strings.TrimSuffix(remoteKey, ".age"))
 }
 
+// liveObjects drops the recycle-bin copies a forced push leaves behind. They
+// are stored beside the synced objects and encrypted the same way, so without
+// this filter a pull would write them back as `_trash/...` files and a remote
+// holding nothing else would look populated to the empty-remote guard.
+func liveObjects(objects []storage.ObjectInfo) []storage.ObjectInfo {
+	live := make([]storage.ObjectInfo, 0, len(objects))
+	for _, obj := range objects {
+		if strings.HasPrefix(obj.Key, TrashPrefix) {
+			continue
+		}
+		live = append(live, obj)
+	}
+	return live
+}
+
 // buildRemoteMap maps remote objects to local relative paths, skipping
 // non-encrypted keys, MCP data, excluded paths, and keys with unknown path
 // tokens (reported via skipped). When a legacy un-normalized key and its
@@ -1009,6 +1033,11 @@ func (s *Syncer) buildRemoteMap(remoteObjects []storage.ObjectInfo) (remoteFiles
 	for _, obj := range remoteObjects {
 		// Skip non-encrypted files
 		if !strings.HasSuffix(obj.Key, ".age") {
+			continue
+		}
+		// Skip recycle-bin copies: they carry a path token this device has no
+		// mapping for, and they are not part of anyone's sync set.
+		if strings.HasPrefix(obj.Key, TrashPrefix) {
 			continue
 		}
 		localPath, ok := s.localPath(obj.Key)
@@ -1076,11 +1105,12 @@ type PullPreview struct {
 func (s *Syncer) PreviewPull(ctx context.Context) (*PullPreview, error) {
 	preview := &PullPreview{}
 
-	// List all remote objects
+	// List all remote objects, minus the recycle bin
 	remoteObjects, err := s.storage.List(ctx, "")
 	if err != nil {
 		return nil, fmt.Errorf("failed to list remote objects: %w", err)
 	}
+	remoteObjects = liveObjects(remoteObjects)
 
 	// Build remote file map
 	remoteFiles, _ := s.buildRemoteMap(remoteObjects)
@@ -1190,11 +1220,12 @@ func (s *Syncer) Diff(ctx context.Context) ([]DiffEntry, error) {
 		return nil, fmt.Errorf("failed to get local files: %w", err)
 	}
 
-	// Get remote files
+	// Get remote files, minus the recycle bin
 	remoteObjects, err := s.storage.List(ctx, "")
 	if err != nil {
 		return nil, fmt.Errorf("failed to list remote objects: %w", err)
 	}
+	remoteObjects = liveObjects(remoteObjects)
 
 	remoteFiles, _ := s.buildRemoteMap(remoteObjects)
 
