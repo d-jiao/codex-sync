@@ -6,8 +6,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
+	awshttp "github.com/aws/aws-sdk-go-v2/aws/transport/http"
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
@@ -181,6 +183,7 @@ func (c *Client) List(ctx context.Context, prefix string) ([]storage.ObjectInfo,
 				Size:         aws.ToInt64(obj.Size),
 				LastModified: aws.ToTime(obj.LastModified),
 				ETag:         aws.ToString(obj.ETag),
+				Version:      aws.ToString(obj.ETag),
 			})
 		}
 
@@ -208,7 +211,39 @@ func (c *Client) Head(ctx context.Context, key string) (*storage.ObjectInfo, err
 		Size:         aws.ToInt64(result.ContentLength),
 		LastModified: aws.ToTime(result.LastModified),
 		ETag:         aws.ToString(result.ETag),
+		Version:      aws.ToString(result.ETag),
 	}, nil
+}
+
+// DeleteIfUnchanged removes key only while its ETag still matches
+// expectedVersion, so an object another device replaced in the meantime
+// survives.
+func (c *Client) DeleteIfUnchanged(ctx context.Context, key, expectedVersion string) error {
+	if expectedVersion == "" {
+		return fmt.Errorf("%w: no known version for %s", storage.ErrPreconditionFailed, key)
+	}
+	_, err := c.client.DeleteObject(ctx, &s3.DeleteObjectInput{
+		Bucket:  aws.String(c.bucket),
+		Key:     aws.String(key),
+		IfMatch: aws.String(expectedVersion),
+	})
+	if err != nil {
+		if isPreconditionFailed(err) {
+			return fmt.Errorf("%w: %s", storage.ErrPreconditionFailed, key)
+		}
+		return fmt.Errorf("failed to delete %s: %w", key, err)
+	}
+	return nil
+}
+
+// isPreconditionFailed reports whether an S3 API error is a 412 rejection of
+// our If-Match header.
+func isPreconditionFailed(err error) bool {
+	var respErr *awshttp.ResponseError
+	if errors.As(err, &respErr) {
+		return respErr.HTTPStatusCode() == http.StatusPreconditionFailed
+	}
+	return false
 }
 
 // BucketExists checks if the configured bucket exists

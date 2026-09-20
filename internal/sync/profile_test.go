@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/d-jiao/codex-sync/internal/config"
+	"github.com/d-jiao/codex-sync/internal/storage"
 )
 
 // seedRemote plants an already-encrypted object so pull tests can start from a
@@ -98,7 +99,8 @@ func TestPullNeverWritesProtectedFiles(t *testing.T) {
 func TestDownloadFileRefusesProtectedPath(t *testing.T) {
 	env := setupTestEnv(t)
 	seedRemote(t, env, "auth.json", `{"token":"remote"}`)
-	err := env.syncer.downloadFile(context.Background(), "auth.json", env.syncer.remoteKey("auth.json"), nil)
+	err := env.syncer.downloadFile(context.Background(), "auth.json",
+		storage.ObjectInfo{Key: env.syncer.remoteKey("auth.json")}, nil)
 	if err == nil {
 		t.Fatal("downloadFile must refuse protected paths")
 	}

@@ -158,6 +158,32 @@ func (c *Client) Delete(ctx context.Context, key string) error {
 	return nil
 }
 
+// DeleteIfUnchanged removes key only while its ETag still matches
+// expectedVersion. Servers that ignore If-Match on DELETE cannot offer this
+// guarantee; sync compares the version itself before calling, so the header is
+// the second of two checks rather than the only one.
+func (c *Client) DeleteIfUnchanged(ctx context.Context, key, expectedVersion string) error {
+	if expectedVersion == "" {
+		return fmt.Errorf("%w: no known version for %s", storage.ErrPreconditionFailed, key)
+	}
+	resp, err := c.doRequest(ctx, "DELETE", c.fullURL(key), nil, map[string]string{
+		"If-Match": `"` + strings.Trim(expectedVersion, `"`) + `"`,
+	})
+	if err != nil {
+		return fmt.Errorf("failed to delete %s: %w", key, err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode == http.StatusPreconditionFailed {
+		return fmt.Errorf("%w: %s", storage.ErrPreconditionFailed, key)
+	}
+	if resp.StatusCode != http.StatusNoContent && resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNotFound {
+		return fmt.Errorf("failed to delete %s: HTTP %d", key, resp.StatusCode)
+	}
+
+	return nil
+}
+
 // DeleteBatch removes multiple objects sequentially.
 func (c *Client) DeleteBatch(ctx context.Context, keys []string) error {
 	if len(keys) == 0 {
@@ -277,6 +303,7 @@ func (c *Client) listRecursive(ctx context.Context, startURL string) ([]storage.
 				Size:         r.ContentLength,
 				LastModified: r.LastModified,
 				ETag:         r.ETag,
+				Version:      r.ETag,
 			})
 		}
 	}
@@ -336,6 +363,7 @@ func (c *Client) collectObjects(responses []parsedResponse) []storage.ObjectInfo
 			Size:         r.ContentLength,
 			LastModified: r.LastModified,
 			ETag:         r.ETag,
+			Version:      r.ETag,
 		})
 	}
 	return objects
@@ -397,6 +425,7 @@ func (c *Client) Head(ctx context.Context, key string) (*storage.ObjectInfo, err
 		Size:         r.ContentLength,
 		LastModified: r.LastModified,
 		ETag:         r.ETag,
+		Version:      r.ETag,
 	}, nil
 }
 

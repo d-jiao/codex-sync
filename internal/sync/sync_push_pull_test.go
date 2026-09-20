@@ -23,29 +23,66 @@ type mockStorage struct {
 	// service whose timestamps land slightly after the client's clock (R2 does
 	// this by a few milliseconds).
 	clockSkew time.Duration
+	// freezeTime, when set, is reported as every object's LastModified,
+	// simulating a provider with a coarse or stuck clock so tests can prove
+	// that version identity alone detects a remote change.
+	freezeTime time.Time
+	// nextVersion feeds the per-object revision counter that stands in for an
+	// S3 ETag or a GCS generation.
+	nextVersion int
+	// onUpload runs inside Upload, before the object is stored, so tests can
+	// simulate a process writing to the local file mid-upload.
+	onUpload func(key string)
+	// downloadErr, when set for a key, makes Download fail.
+	downloadErr map[string]error
+	// uploadErr, when set for a key, makes Upload fail.
+	uploadErr map[string]error
 }
 
 type mockObject struct {
 	data         []byte
 	lastModified time.Time
+	version      string
 }
 
 func newMockStorage() *mockStorage {
 	return &mockStorage{objects: make(map[string]mockObject)}
 }
 
+// modTime reports the timestamp the mock stamps on a newly written object.
+func (m *mockStorage) modTime() time.Time {
+	if !m.freezeTime.IsZero() {
+		return m.freezeTime
+	}
+	return time.Now().Add(m.clockSkew)
+}
+
 func (m *mockStorage) Upload(_ context.Context, key string, data []byte) error {
+	if hook := m.onUpload; hook != nil {
+		hook(key)
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.uploadErr[key]; err != nil {
+		return err
+	}
 	cp := make([]byte, len(data))
 	copy(cp, data)
-	m.objects[key] = mockObject{data: cp, lastModified: time.Now().Add(m.clockSkew)}
+	m.nextVersion++
+	m.objects[key] = mockObject{
+		data:         cp,
+		lastModified: m.modTime(),
+		version:      fmt.Sprintf("v%d", m.nextVersion),
+	}
 	return nil
 }
 
 func (m *mockStorage) Download(_ context.Context, key string) ([]byte, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.downloadErr[key]; err != nil {
+		return nil, err
+	}
 	obj, ok := m.objects[key]
 	if !ok {
 		return nil, fmt.Errorf("object not found: %s", key)
@@ -81,6 +118,8 @@ func (m *mockStorage) List(_ context.Context, prefix string) ([]storage.ObjectIn
 				Key:          key,
 				Size:         int64(len(obj.data)),
 				LastModified: obj.lastModified,
+				ETag:         obj.version,
+				Version:      obj.version,
 			})
 		}
 	}
@@ -98,7 +137,38 @@ func (m *mockStorage) Head(_ context.Context, key string) (*storage.ObjectInfo, 
 		Key:          key,
 		Size:         int64(len(obj.data)),
 		LastModified: obj.lastModified,
+		ETag:         obj.version,
+		Version:      obj.version,
 	}, nil
+}
+
+// DeleteIfUnchanged implements storage.ConditionalDeleter so deletion tests
+// exercise the same path the real adapters take.
+func (m *mockStorage) DeleteIfUnchanged(_ context.Context, key, expectedVersion string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	obj, ok := m.objects[key]
+	if !ok {
+		return nil
+	}
+	if expectedVersion == "" || obj.version != expectedVersion {
+		return fmt.Errorf("%w: %s", storage.ErrPreconditionFailed, key)
+	}
+	delete(m.objects, key)
+	return nil
+}
+
+// setVersion replaces an object's revision without changing its bytes or
+// timestamp, standing in for another device overwriting it.
+func (m *mockStorage) setVersion(key, version string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	obj, ok := m.objects[key]
+	if !ok {
+		return
+	}
+	obj.version = version
+	m.objects[key] = obj
 }
 
 func (m *mockStorage) BucketExists(_ context.Context) (bool, error) {

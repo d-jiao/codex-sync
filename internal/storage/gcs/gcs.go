@@ -5,10 +5,13 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
+	"strconv"
 
 	"cloud.google.com/go/storage"
 	"golang.org/x/sync/errgroup"
+	"google.golang.org/api/googleapi"
 	"google.golang.org/api/iterator"
 	"google.golang.org/api/option"
 
@@ -150,6 +153,7 @@ func (c *Client) List(ctx context.Context, prefix string) ([]appstorage.ObjectIn
 			Size:         attrs.Size,
 			LastModified: attrs.Updated,
 			ETag:         attrs.Etag,
+			Version:      strconv.FormatInt(attrs.Generation, 10),
 		})
 	}
 
@@ -168,7 +172,27 @@ func (c *Client) Head(ctx context.Context, key string) (*appstorage.ObjectInfo, 
 		Size:         attrs.Size,
 		LastModified: attrs.Updated,
 		ETag:         attrs.Etag,
+		Version:      strconv.FormatInt(attrs.Generation, 10),
 	}, nil
+}
+
+// DeleteIfUnchanged removes key only while its generation still matches
+// expectedVersion, so an object another device replaced in the meantime
+// survives.
+func (c *Client) DeleteIfUnchanged(ctx context.Context, key, expectedVersion string) error {
+	generation, err := strconv.ParseInt(expectedVersion, 10, 64)
+	if err != nil {
+		return fmt.Errorf("%w: unusable generation %q for %s", appstorage.ErrPreconditionFailed, expectedVersion, key)
+	}
+	obj := c.client.Bucket(c.bucket).Object(key).If(storage.Conditions{GenerationMatch: generation})
+	if err := obj.Delete(ctx); err != nil {
+		var apiErr *googleapi.Error
+		if errors.As(err, &apiErr) && apiErr.Code == http.StatusPreconditionFailed {
+			return fmt.Errorf("%w: %s", appstorage.ErrPreconditionFailed, key)
+		}
+		return fmt.Errorf("failed to delete %s: %w", key, err)
+	}
+	return nil
 }
 
 // BucketExists checks if the configured bucket exists

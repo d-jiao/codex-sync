@@ -21,6 +21,11 @@ type FileState struct {
 	Size     int64     `json:"size"`
 	ModTime  time.Time `json:"mod_time"`
 	Uploaded time.Time `json:"uploaded,omitempty"`
+	// RemoteVersion is the provider's identifier for the exact remote revision
+	// this entry describes (an S3/WebDAV ETag, a GCS generation). State written
+	// before it existed simply leaves it empty, and comparisons fall back to
+	// Uploaded.
+	RemoteVersion string `json:"remote_version,omitempty"`
 }
 
 type SyncState struct {
@@ -136,11 +141,16 @@ func (s *SyncState) Save() error {
 func (s *SyncState) UpdateFile(relativePath string, info os.FileInfo, hash string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	var version string
+	if prev, ok := s.Files[relativePath]; ok {
+		version = prev.RemoteVersion
+	}
 	s.Files[relativePath] = &FileState{
-		Path:    relativePath,
-		Hash:    hash,
-		Size:    info.Size(),
-		ModTime: info.ModTime(),
+		Path:          relativePath,
+		Hash:          hash,
+		Size:          info.Size(),
+		ModTime:       info.ModTime(),
+		RemoteVersion: version,
 	}
 }
 
@@ -157,6 +167,21 @@ func (s *SyncState) MarkUploadedAt(relativePath string, at time.Time) {
 	defer s.mu.Unlock()
 	if f, ok := s.Files[relativePath]; ok {
 		f.Uploaded = at
+	}
+}
+
+// MarkRemote records which remote revision the local copy of relativePath now
+// matches. modified is the remote object's own timestamp, used when the
+// provider reports no usable version; version is that provider identifier.
+func (s *SyncState) MarkRemote(relativePath string, modified time.Time, version string) {
+	if modified.IsZero() {
+		modified = time.Now()
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if f, ok := s.Files[relativePath]; ok {
+		f.Uploaded = modified
+		f.RemoteVersion = version
 	}
 }
 

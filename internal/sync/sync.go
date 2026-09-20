@@ -359,7 +359,7 @@ func (s *Syncer) Pull(ctx context.Context) (*SyncResult, error) {
 			shouldDownload = true
 		} else if stateFile != nil {
 			// Check if remote is newer than our last known state
-			if remoteObj.LastModified.After(stateFile.Uploaded) {
+			if remoteChanged(remoteObj, stateFile) {
 				// Remote was updated after we last uploaded
 				// Check if local was also modified
 				localHash, _ := HashFile(filepath.Join(s.claudeDir, localPath))
@@ -418,7 +418,7 @@ func (s *Syncer) Pull(ctx context.Context) (*SyncResult, error) {
 					}
 				}
 
-				if err := s.downloadFile(ctx, task.localPath, task.remoteObj.Key, mtime); err != nil {
+				if err := s.downloadFile(ctx, task.localPath, task.remoteObj, mtime); err != nil {
 					s.progress(ProgressEvent{
 						Action: "download",
 						Path:   task.localPath,
@@ -476,11 +476,22 @@ func (s *Syncer) Status(ctx context.Context) ([]FileChange, error) {
 func (s *Syncer) uploadFile(ctx context.Context, relativePath string) error {
 	fullPath := filepath.Join(s.claudeDir, relativePath)
 
+	// Snapshot the file before reading it so a concurrent writer (Codex
+	// appending to a rollout, say) can be detected after the upload.
+	before, err := os.Stat(fullPath)
+	if err != nil {
+		return fmt.Errorf("failed to stat file: %w", err)
+	}
+
 	// Read file
 	data, err := os.ReadFile(fullPath)
 	if err != nil {
 		return fmt.Errorf("failed to read file: %w", err)
 	}
+
+	// State records what we actually uploaded, so hash these exact bytes
+	// rather than re-reading the file afterwards.
+	localHash := hashBytes(data)
 
 	// Replace machine-specific paths with portable tokens in session content
 	if IsPortableContentPath(relativePath) {
@@ -505,22 +516,50 @@ func (s *Syncer) uploadFile(ctx context.Context, relativePath string) error {
 		return fmt.Errorf("failed to upload: %w", err)
 	}
 
+	// If the file changed while we were uploading, the remote now holds a
+	// prefix of it. Leave state untouched so the next push sees the file as
+	// still pending instead of recording the newer bytes as synced.
+	after, err := os.Stat(fullPath)
+	if err != nil {
+		return fmt.Errorf("failed to re-stat file after upload: %w", err)
+	}
+	if after.Size() != before.Size() || !after.ModTime().Equal(before.ModTime()) {
+		return fmt.Errorf("file changed while uploading; it will be retried on the next push")
+	}
+
 	// Storage services stamp objects with their own clock, and that stamp can
 	// land a few milliseconds after the upload call returns (R2 does this).
 	// Record the later of the two so this upload never looks newer than
 	// "uploaded" to the next pull, which would re-download identical bytes.
 	uploadedAt := time.Now()
-	if hdr, err := s.storage.Head(ctx, remoteKey); err == nil && hdr != nil && hdr.LastModified.After(uploadedAt) {
-		uploadedAt = hdr.LastModified
+	var remoteVersion string
+	if hdr, err := s.storage.Head(ctx, remoteKey); err == nil && hdr != nil {
+		remoteVersion = hdr.Version
+		if hdr.LastModified.After(uploadedAt) {
+			uploadedAt = hdr.LastModified
+		}
 	}
 
 	// Update state
-	info, _ := os.Stat(fullPath)
-	hash, _ := HashFile(fullPath)
-	s.state.UpdateFile(relativePath, info, hash)
-	s.state.MarkUploadedAt(relativePath, uploadedAt)
+	s.state.UpdateFile(relativePath, after, localHash)
+	s.state.MarkRemote(relativePath, uploadedAt, remoteVersion)
 
 	return nil
+}
+
+// remoteChanged reports whether a remote object differs from the revision this
+// device last recorded. Provider versions (ETag, GCS generation) are exact, so
+// they win whenever both sides have one; timestamps are the fallback, and they
+// are only trustworthy in one direction because storage clocks drift and some
+// providers report whole seconds.
+func remoteChanged(remote storage.ObjectInfo, state *FileState) bool {
+	if state == nil {
+		return true
+	}
+	if remote.Version != "" && state.RemoteVersion != "" {
+		return remote.Version != state.RemoteVersion
+	}
+	return remote.LastModified.After(state.Uploaded)
 }
 
 // fetchRemote downloads, decrypts, decompresses and de-tokenizes one remote object.
@@ -557,11 +596,11 @@ func (s *Syncer) localFilePath(relativePath string) (string, error) {
 
 // downloadFile downloads and decrypts a file from remote storage.
 // If originalMtime is non-nil, the file's modification time will be restored to that value.
-func (s *Syncer) downloadFile(ctx context.Context, relativePath, remoteKey string, originalMtime *time.Time) error {
+func (s *Syncer) downloadFile(ctx context.Context, relativePath string, remote storage.ObjectInfo, originalMtime *time.Time) error {
 	if config.IsProtected(relativePath) {
 		return fmt.Errorf("refusing to write protected file %s", relativePath)
 	}
-	data, err := s.fetchRemote(ctx, relativePath, remoteKey)
+	data, err := s.fetchRemote(ctx, relativePath, remote.Key)
 	if err != nil {
 		return err
 	}
@@ -593,7 +632,7 @@ func (s *Syncer) downloadFile(ctx context.Context, relativePath, remoteKey strin
 	info, _ := os.Stat(fullPath)
 	hash, _ := HashFile(fullPath)
 	s.state.UpdateFile(relativePath, info, hash)
-	s.state.MarkUploaded(relativePath)
+	s.state.MarkRemote(relativePath, remote.LastModified, remote.Version)
 
 	return nil
 }
@@ -609,7 +648,7 @@ func (s *Syncer) handleConflict(ctx context.Context, relativePath string, remote
 	// .conflict. suffix) but also records the sidecar in state; undo that.
 	conflictPath := relativePath + ".conflict." + time.Now().Format("20060102-150405")
 	defer s.state.RemoveFile(conflictPath)
-	if err := s.downloadFile(ctx, conflictPath, remoteObj.Key, nil); err != nil {
+	if err := s.downloadFile(ctx, conflictPath, remoteObj, nil); err != nil {
 		return fmt.Errorf("failed to save conflict file: %w", err)
 	}
 
@@ -706,7 +745,7 @@ func (s *Syncer) moveToTrash(relPath, batch string) error {
 // or was never synced here. State records the remote hash, so the next push
 // uploads the union exactly when the local copy contributed something.
 func (s *Syncer) mergeRemote(ctx context.Context, relativePath string, remoteObj storage.ObjectInfo, localExists bool, stateFile *FileState) (bool, error) {
-	if stateFile != nil && localExists && !remoteObj.LastModified.After(stateFile.Uploaded) {
+	if stateFile != nil && localExists && !remoteChanged(remoteObj, stateFile) {
 		return false, nil // remote unchanged since we last merged it
 	}
 	remoteData, err := s.fetchRemote(ctx, relativePath, remoteObj.Key)
@@ -735,7 +774,7 @@ func (s *Syncer) mergeRemote(ctx context.Context, relativePath string, remoteObj
 		return false, err
 	}
 	s.state.UpdateFile(relativePath, info, hashBytes(remoteData))
-	s.state.MarkUploaded(relativePath)
+	s.state.MarkRemote(relativePath, remoteObj.LastModified, remoteObj.Version)
 	return true, nil
 }
 
@@ -935,7 +974,7 @@ func (s *Syncer) PreviewPull(ctx context.Context) (*PullPreview, error) {
 		}
 
 		if IsMergeablePath(localPath) {
-			if stateFile == nil || !localExists || remoteObj.LastModified.After(stateFile.Uploaded) {
+			if stateFile == nil || !localExists || remoteChanged(remoteObj, stateFile) {
 				preview.WouldMerge = append(preview.WouldMerge, fp)
 			}
 			continue
@@ -947,7 +986,7 @@ func (s *Syncer) PreviewPull(ctx context.Context) (*PullPreview, error) {
 			preview.WouldDownload = append(preview.WouldDownload, fp)
 		} else if stateFile != nil {
 			// Check if remote is newer than our last known state
-			if remoteObj.LastModified.After(stateFile.Uploaded) {
+			if remoteChanged(remoteObj, stateFile) {
 				// Remote was updated after we last uploaded
 				localHash, _ := HashFile(filepath.Join(s.claudeDir, localPath))
 				if localHash != stateFile.Hash {
@@ -1039,7 +1078,7 @@ func (s *Syncer) Diff(ctx context.Context) ([]DiffEntry, error) {
 			stateFile := s.state.GetFile(relPath)
 			if stateFile != nil {
 				localHash, _ := HashFile(filepath.Join(s.claudeDir, relPath))
-				if localHash != stateFile.Hash || remoteObj.LastModified.After(stateFile.Uploaded) {
+				if localHash != stateFile.Hash || remoteChanged(remoteObj, stateFile) {
 					entries = append(entries, DiffEntry{
 						Path:       relPath,
 						Status:     "modified",

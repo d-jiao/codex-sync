@@ -2,6 +2,7 @@ package storage
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 )
@@ -26,7 +27,27 @@ type ObjectInfo struct {
 	Size         int64
 	LastModified time.Time
 	ETag         string
+	// Version identifies one exact revision of the object, for optimistic
+	// concurrency. S3, R2 and WebDAV report the ETag here; GCS reports the
+	// object generation. It is empty when the provider reports nothing usable,
+	// in which case callers fall back to LastModified comparisons.
+	Version string
 }
+
+// ConditionalDeleter is implemented by adapters that can delete an object only
+// while it still matches a known revision. Sync uses it so a remote object
+// another device updated after this device recorded its state survives a
+// delete that was decided from that stale state.
+type ConditionalDeleter interface {
+	// DeleteIfUnchanged removes key only if its current revision equals
+	// expectedVersion. It returns an error satisfying IsPreconditionFailed
+	// when the revision no longer matches.
+	DeleteIfUnchanged(ctx context.Context, key, expectedVersion string) error
+}
+
+// ErrPreconditionFailed reports that a conditional operation was refused
+// because the remote object no longer matches the expected revision.
+var ErrPreconditionFailed = errors.New("remote object changed since it was last seen")
 
 // Storage defines the interface for cloud storage operations
 type Storage interface {
