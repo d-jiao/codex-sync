@@ -47,7 +47,8 @@ SQLite databases are derived from those files and are rebuilt on startup.
 codex-sync treats the files as the source of truth:
 
 1. **`push`** encrypts every file that changed since the last sync and uploads
-   it to your bucket; files you deleted locally are deleted remotely.
+   it to your bucket; files you deleted locally are reported and kept in
+   storage until you run `push --force`.
 2. **`pull`** downloads what changed remotely, merges the two shared index
    files, saves both-sides-changed files as conflict sidecars, and moves files
    that vanished from the remote to a trash directory.
@@ -160,6 +161,9 @@ No bucket to create — point at your existing server.
 
 You'll need: WebDAV URL, Username, App password. The wizard creates a
 `codex-sync` subdirectory for you.
+
+Object names are percent-encoded per path segment, so attachments whose names
+contain spaces, `#`, `?` or `%` upload, list and download correctly.
 </details>
 
 ### 3. Initialize on the first machine
@@ -216,6 +220,11 @@ This registers a per-user launchd agent
 at every login. Output goes to `~/Library/Logs/codex-sync.log`; when a file
 fails, the job exits non-zero and the log says which file and why.
 
+The scheduled job never passes `push --force`: an unattended run must not be
+the thing that deletes remote files. It pulls first anyway, which restores
+anything you deleted locally, so deleting a file on every machine is a
+deliberate `codex-sync push --force`.
+
 launchd jobs do not see your shell environment. If you use a custom Codex home,
 run `CODEX_HOME=/path/to/home make install-launchd` — the value is baked into
 the agent at install time (re-run the target to change it). There is no
@@ -235,7 +244,7 @@ codex-sync conflicts          # list and resolve conflicts
 | Command | What it does |
 |---|---|
 | `init` | Set up storage, key and scope (interactive wizard) |
-| `push` | Upload local changes; delete remote copies of files removed locally |
+| `push` | Upload local changes; report files removed locally (`--force` deletes them remotely) |
 | `pull` | Download remote changes; merge, conflict or trash as described below |
 | `desktop refresh` | Make pulled threads visible in the ChatGPT desktop app |
 | `status` | Show pending local changes |
@@ -257,6 +266,8 @@ codex-sync pull --dry-run         # preview downloads, merges, conflicts and rem
 codex-sync pull --force           # skip the first-pull confirmation prompt
 codex-sync pull --no-delete       # never move local files to the trash
 codex-sync pull --desktop         # refresh the desktop app after a successful pull
+
+codex-sync push --force           # also delete the remote copies of files deleted locally
 
 codex-sync init --passphrase      # re-enter the passphrase only (keeps storage config)
 codex-sync init --force           # start over: overwrite config and key
@@ -332,10 +343,27 @@ usernames still work.
 
 ### Push
 
-Uploads files whose content changed since the last sync and deletes the remote
-copies of files removed locally. A file that still has a live `.conflict.*`
-sidecar is skipped and reported as an error until you resolve it with
-`codex-sync conflicts`; the sidecar itself is never uploaded.
+Uploads files whose content changed since the last sync. A file that still has
+a live `.conflict.*` sidecar is skipped and reported as an error until you
+resolve it with `codex-sync conflicts`; the sidecar itself is never uploaded.
+
+**Files deleted locally are not deleted remotely by default.** A stale
+checkout, a restored backup or a half-configured `sync_paths` would otherwise
+erase the copy every other machine pulls from. Push lists them instead:
+
+```
+2 file(s) deleted locally are still in storage:
+  • sessions/rollout-2026-09-12.jsonl
+  • memories/old-note.md
+  Run codex-sync push --force to delete them remotely too.
+```
+
+`push --force` deletes them, but still refuses to remove an object that
+another machine has replaced since your last sync — that file is reported as a
+conflict and left in storage. Pull it first, then push again. Where the
+provider supports it (S3, R2, GCS, and WebDAV servers that honour `If-Match`),
+the delete is also conditional on the object version, so a device that uploads
+in the middle of your push keeps its copy.
 
 ### Pull
 
@@ -353,6 +381,11 @@ sidecar is skipped and reported as an error until you resolve it with
   are reported. `--no-delete` disables this, `--dry-run` previews it. Nothing
   references the trash, so old batches are safe to delete.
 - **An empty remote never removes anything.**
+- **Pull writes are atomic and stay inside `~/.codex`.** Each file is written
+  to a temporary file and renamed into place, so an interrupted pull leaves
+  either the old file or the new one. A path that crosses a symlink is
+  refused and reported rather than followed, which matches push: it skips
+  symlinks instead of uploading what they point at.
 
 ### Conflicts
 
@@ -373,7 +406,9 @@ When `~/.codex` already has content, pull:
 
 1. shows what would be overwritten, kept, merged or downloaded;
 2. asks whether to **back up**, **overwrite** or **abort**;
-3. on *back up*, copies the existing files to `~/.codex.backup.<timestamp>` first.
+3. on *back up*, copies the existing files to `~/.codex.backup.<timestamp>`
+   first. The backup holds the same set of files a push would upload, so
+   `auth.json`, the SQLite databases and anything you excluded stay out of it.
 
 `pull --dry-run` shows the preview without changing anything; `pull --force`
 skips the prompt (for scripts).
@@ -407,10 +442,11 @@ Relaunch the app and the pulled threads appear, with their names.
 **Good to know:**
 
 - It refuses to run while the ChatGPT app or any `codex` process is open, since
-  they hold the databases. (A `codex` started from a path containing spaces is
-  not detected.) `pull --desktop` still completes the pull in that case, then
-  reports the running app and exits non-zero — so `pull --desktop && push`
-  stops there; quit the app and run `codex-sync desktop refresh`.
+  they hold the databases. Detection compares each process's executable name,
+  so an app bundle installed under a path containing spaces is found too.
+  `pull --desktop` still completes the pull in that case, then reports the
+  running app and exits non-zero — so `pull --desktop && push` stops there;
+  quit the app and run `codex-sync desktop refresh`.
 - It is safe to run repeatedly.
 - The engine used is the ChatGPT app's bundled one; `--codex-bin` or
   `$CODEX_BIN` override it. A different engine version may migrate every Codex

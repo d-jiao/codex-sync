@@ -118,7 +118,14 @@ transcripts) is removed; a rollout-based rebuild can be added later if needed.
 
 ## 7. Deletions, moves, conflicts
 
-- Push: files removed locally since the last sync are deleted remotely. A modified
+- Push: files removed locally since the last sync are reported, not deleted remotely.
+  Deleting requires `push --force`. The original design assumed the local Codex home
+  is always authoritative; a stale checkout, a restored backup or a `sync_paths` that
+  no longer covers a directory breaks that assumption and would otherwise erase the
+  copy every other device pulls from. Under `--force`, push re-lists the remote and
+  keeps any object whose version or timestamp shows another device replaced it since
+  the last sync, reporting it as a conflict; the delete itself is conditional on the
+  object version wherever the provider supports it. A modified
   file that still has a live `<path>.conflict.*` sidecar next to it is **not**
   uploaded: push reports `unresolved conflict for <path>; run 'codex-sync conflicts'`
   and fails its exit code, while every other file still uploads. Resolving the
@@ -134,6 +141,9 @@ transcripts) is removed; a rollout-based rebuild can be added later if needed.
 - Conflicts: unchanged — local kept, remote saved as `<path>.conflict.<timestamp>`,
   resolved with `codex-sync conflicts`. Sidecar names do not end in `.jsonl`, so Codex's
   rollout scanner is expected to ignore them (verify in Phase 5, §12).
+- Conflict sidecars are written through a collision-safe path helper: a second conflict
+  in the same second becomes `<path>.conflict.<timestamp>-1` rather than overwriting the
+  first. Every pull write is validated against symlinks and renamed into place.
 - Sidecars are local artifacts only: `*.conflict.*` is a hard exclude, so they are never
   uploaded, never tracked in state (the pull that writes one drops its entry), and never
   moved to the trash as a "vanished remote file"; they exist until `codex-sync conflicts`

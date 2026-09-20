@@ -59,10 +59,10 @@ changing it would silently derive a different key on every existing install.
 |---|---|---|
 | `~/.codex-sync/config.yaml` | storage provider, bucket, **plaintext storage credentials**, scope, excludes | `0600` |
 | `~/.codex-sync/age-key.txt` | the age identity (derived or random) | `0600` |
-| `~/.codex-sync/state.json` | per-file hashes, sizes, mtimes, sync times | `0600` |
+| `~/.codex-sync/state.json` | per-file hashes, sizes, mtimes, remote versions, sync times | `0600` |
 | `~/.codex-sync/trash/`, `db-backup-*/` | files pull removed; database copies from `desktop refresh` | `0700` dirs, `0600` files |
 | downloaded files under `~/.codex` | decrypted content | `0700` dirs, `0600` files |
-| `~/.codex.backup.<timestamp>` | first-pull backup of pre-existing files | `0700` / `0600` |
+| `~/.codex.backup.<timestamp>` | first-pull backup of pre-existing files, filtered by the configured excludes | `0700` / `0600` |
 
 Storage credentials are stored in plaintext in `config.yaml` (audit M1). The
 `0600` mode keeps other local users out, but any process running as you can
@@ -73,6 +73,8 @@ plus the ability to delete or replace it.
 Two files under `~/.codex` are **protected**: `auth.json` (your OpenAI login)
 and `installation_id` are never uploaded and never written by pull, regardless
 of configuration. Every `*.sqlite*` / `*.db*` file is likewise excluded.
+The same filter applies to the first-pull backup, so credentials and databases
+are not copied into `~/.codex.backup.<timestamp>` either.
 
 ## Integrity and availability
 
@@ -81,12 +83,21 @@ of configuration. Every `*.sqlite*` / `*.db*` file is likewise excluded.
   while leaving the local copy and its state entry untouched. Object *keys* are
   not authenticated, so someone with
   write access to the bucket could delete objects or move ciphertext between
-  keys. Remote keys are validated before writing: a key that would resolve
-  outside `~/.codex` is rejected (audit L1).
+    keys. Remote keys are validated before writing: a key that would resolve
+    outside `~/.codex` is rejected (audit L1).
+  Pull additionally refuses any destination path that crosses a symlink, so a
+  symlink planted inside `~/.codex` cannot redirect a decrypted file elsewhere
+  on disk, and every write is a rename of a temporary file, so an interrupted
+  pull cannot leave a half-written file behind.
 - **Deletion.** Someone with bucket write access can delete your remote copies.
   Pull moves locally unchanged files whose remote copy vanished into
   `~/.codex-sync/trash/` rather than deleting them, and a pull that finds an
   *empty* bucket removes nothing at all.
+  In the other direction, push does not delete remote objects unless you pass
+  `--force`, and even then it skips any object another device has replaced
+  since your last sync, using a conditional delete where the provider supports
+  one. A machine with a stale or partially configured Codex home therefore
+  cannot erase everyone else's copy.
 - **Self-update.** `codex-sync update` downloads a release binary over HTTPS
   from this repository's GitHub Releases and verifies it against the release's
   `checksums.txt` when one is published (audit M2). Releases without checksums
