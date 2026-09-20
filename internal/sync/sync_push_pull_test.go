@@ -33,6 +33,9 @@ type mockStorage struct {
 	// onUpload runs inside Upload, before the object is stored, so tests can
 	// simulate a process writing to the local file mid-upload.
 	onUpload func(key string)
+	// onDelete runs inside DeleteIfUnchanged, before the precondition is
+	// evaluated, so tests can simulate another device replacing the object.
+	onDelete func(key string)
 	// downloadErr, when set for a key, makes Download fail.
 	downloadErr map[string]error
 	// uploadErr, when set for a key, makes Upload fail.
@@ -145,6 +148,9 @@ func (m *mockStorage) Head(_ context.Context, key string) (*storage.ObjectInfo, 
 // DeleteIfUnchanged implements storage.ConditionalDeleter so deletion tests
 // exercise the same path the real adapters take.
 func (m *mockStorage) DeleteIfUnchanged(_ context.Context, key, expectedVersion string) error {
+	if hook := m.onDelete; hook != nil {
+		hook(key)
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	obj, ok := m.objects[key]
@@ -329,6 +335,7 @@ func TestPushUploadsModifiedFiles(t *testing.T) {
 func TestPushDeletesRemovedFiles(t *testing.T) {
 	env := setupTestEnv(t)
 	ctx := context.Background()
+	env.syncer.SetAllowRemoteDeletes(true) // push --force
 
 	writeFile(t, env.claudeDir, "AGENTS.md", "# Settings")
 
@@ -353,6 +360,9 @@ func TestPushDeletesRemovedFiles(t *testing.T) {
 	objs, _ := env.store.ListUserObjects(ctx)
 	if len(objs) != 0 {
 		t.Errorf("Expected 0 objects in storage after delete, got %d", len(objs))
+	}
+	if env.syncer.state.GetFile("AGENTS.md") != nil {
+		t.Error("state entry should be dropped after a successful delete")
 	}
 }
 

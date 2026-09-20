@@ -31,6 +31,8 @@ func twoDevicesWithGoneFile(t *testing.T) (*testEnv, *testEnv) {
 	if err := os.Remove(filepath.Join(a.claudeDir, gone)); err != nil {
 		t.Fatal(err)
 	}
+	// Removing the remote copy is what `push --force` is for.
+	a.syncer.SetAllowRemoteDeletes(true)
 	if _, err := a.syncer.Push(ctx); err != nil {
 		t.Fatal(err)
 	}

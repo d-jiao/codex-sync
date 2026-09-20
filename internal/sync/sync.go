@@ -5,6 +5,7 @@ import (
 	"compress/gzip"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -55,6 +56,11 @@ type Syncer struct {
 	paths      *PathMapper
 	noDelete   bool   // pull --no-delete: never remove local files that vanished remotely
 	trashDir   string // where removed files are moved (config.TrashDirPath by default)
+	// allowRemoteDeletes gates push-side removal of remote objects. It is off
+	// by default: a local file that disappeared (a stale checkout, a restored
+	// backup, a half-configured sync_paths) must not silently erase the copy
+	// every other device pulls from.
+	allowRemoteDeletes bool
 }
 
 type SyncResult struct {
@@ -66,6 +72,9 @@ type SyncResult struct {
 	Errors     []error
 	Removed    []string // moved to the trash directory: vanished remotely, unchanged locally
 	KeptLocal  []string // vanished remotely but modified locally: left in place
+	// PendingDeletes are files deleted locally whose remote copy was left
+	// alone because the push was not forced.
+	PendingDeletes []string
 }
 
 type ProgressEvent struct {
@@ -149,6 +158,10 @@ func (s *Syncer) SetProgressFunc(fn ProgressFunc) {
 
 // SetNoDelete disables pull-side removal of files that vanished from the remote.
 func (s *Syncer) SetNoDelete(v bool) { s.noDelete = v }
+
+// SetAllowRemoteDeletes enables push-side removal of remote objects whose
+// local file is gone. Callers pass true only for `push --force`.
+func (s *Syncer) SetAllowRemoteDeletes(v bool) { s.allowRemoteDeletes = v }
 
 // SetTrashDir overrides where removed files are moved (for testing).
 func (s *Syncer) SetTrashDir(dir string) { s.trashDir = dir }
@@ -265,20 +278,8 @@ func (s *Syncer) Push(ctx context.Context) (*SyncResult, error) {
 		wg.Wait()
 	}
 
-	// Process deletes (use batch delete if available, otherwise concurrent)
 	if len(deletes) > 0 {
-		deleteKeys := make([]string, len(deletes))
-		for i, change := range deletes {
-			deleteKeys[i] = s.remoteKey(change.Path)
-		}
-		if err := s.storage.DeleteBatch(ctx, deleteKeys); err != nil {
-			result.Errors = append(result.Errors, fmt.Errorf("batch delete: %w", err))
-		} else {
-			for _, change := range deletes {
-				s.state.RemoveFile(change.Path)
-				result.Deleted = append(result.Deleted, change.Path)
-			}
-		}
+		s.applyDeletes(ctx, deletes, result)
 	}
 
 	s.progress(ProgressEvent{Action: "upload", Complete: true, Total: total})
@@ -298,6 +299,78 @@ func (s *Syncer) Push(ctx context.Context) (*SyncResult, error) {
 	}
 
 	return result, nil
+}
+
+// applyDeletes propagates local deletions to the remote. Without --force it
+// only reports them. With --force each object is removed one at a time, and
+// only while it still matches the revision this device last saw, so a copy
+// another device updated in the meantime survives a deletion decided from
+// stale local state.
+func (s *Syncer) applyDeletes(ctx context.Context, deletes []FileChange, result *SyncResult) {
+	if !s.allowRemoteDeletes {
+		for _, change := range deletes {
+			result.PendingDeletes = append(result.PendingDeletes, change.Path)
+		}
+		return
+	}
+
+	// One listing gives both the current revisions and the answer to "is it
+	// even still there", without a per-file Head whose not-found error every
+	// provider spells differently.
+	remoteObjects, err := s.storage.List(ctx, "")
+	if err != nil {
+		result.Errors = append(result.Errors, fmt.Errorf("failed to list remote objects before deleting: %w", err))
+		return
+	}
+	byKey := make(map[string]storage.ObjectInfo, len(remoteObjects))
+	for _, obj := range remoteObjects {
+		byKey[obj.Key] = obj
+	}
+
+	total := len(deletes)
+	for i, change := range deletes {
+		s.progress(ProgressEvent{Action: "delete", Path: change.Path, Current: i + 1, Total: total})
+
+		key := s.remoteKey(change.Path)
+		obj, stillThere := byKey[key]
+		if !stillThere {
+			// Already gone remotely; just stop tracking it.
+			s.state.RemoveFile(change.Path)
+			result.Deleted = append(result.Deleted, change.Path)
+			continue
+		}
+
+		if remoteChanged(obj, s.state.GetFile(change.Path)) {
+			result.Errors = append(result.Errors, fmt.Errorf(
+				"%s: the remote copy changed on another device since this one last synced it; "+
+					"run 'codex-sync pull' and delete it again if you still want it gone", change.Path))
+			continue
+		}
+
+		if err := s.deleteRemoteObject(ctx, key, obj.Version); err != nil {
+			if errors.Is(err, storage.ErrPreconditionFailed) {
+				result.Errors = append(result.Errors, fmt.Errorf(
+					"%s: the remote copy changed while deleting it; nothing was removed", change.Path))
+				continue
+			}
+			result.Errors = append(result.Errors, fmt.Errorf("%s: %w", change.Path, err))
+			continue
+		}
+		s.state.RemoveFile(change.Path)
+		result.Deleted = append(result.Deleted, change.Path)
+	}
+}
+
+// deleteRemoteObject removes key, preferring a conditional delete so the
+// object survives a change that lands between the listing and the request.
+// Providers that report no usable revision (some WebDAV servers omit ETags)
+// fall back to a plain delete, which the staleness check above already
+// guarded with timestamps.
+func (s *Syncer) deleteRemoteObject(ctx context.Context, key, version string) error {
+	if cd, ok := s.storage.(storage.ConditionalDeleter); ok && version != "" {
+		return cd.DeleteIfUnchanged(ctx, key, version)
+	}
+	return s.storage.Delete(ctx, key)
 }
 
 func (s *Syncer) Pull(ctx context.Context) (*SyncResult, error) {

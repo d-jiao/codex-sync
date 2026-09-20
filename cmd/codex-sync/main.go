@@ -1035,10 +1035,15 @@ func runWebDAVWizard(webdavURL, username, password, pathPrefix string) (*storage
 }
 
 func pushCmd() *cobra.Command {
+	var force bool
 	cmd := &cobra.Command{
 		Use:   "push",
 		Short: "Upload local changes to cloud storage",
-		Long:  `Encrypt and upload changed files from ~/.codex to cloud storage.`,
+		Long: `Encrypt and upload changed files from ~/.codex to cloud storage.
+
+Files you deleted locally are reported but left in storage. Pass --force to
+delete them remotely too; a remote copy another device changed since this one
+last synced is still kept, and reported instead.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg, err := config.Load()
 			if err != nil {
@@ -1049,6 +1054,7 @@ func pushCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			syncer.SetAllowRemoteDeletes(force)
 
 			if !quiet {
 				syncer.SetProgressFunc(func(event sync.ProgressEvent) {
@@ -1115,13 +1121,35 @@ func pushCmd() *cobra.Command {
 						fmt.Printf("%s✓%s Push complete: %s\n", colorGreen, colorReset, strings.Join(parts, ", "))
 					}
 				}
+				printPendingDeletes(os.Stdout, result.PendingDeletes)
 			}
 
 			return reportSyncErrors(cmd, os.Stderr, result.Errors)
 		},
 	}
 
+	cmd.Flags().BoolVar(&force, "force", false, "Also delete remote copies of files deleted locally")
+
 	return cmd
+}
+
+// printPendingDeletes explains the local deletions push left alone. Deleting
+// remote data is never the default: a stale checkout or a half-configured
+// sync_paths would otherwise erase the copy every other device pulls from.
+func printPendingDeletes(w io.Writer, pending []string) {
+	if len(pending) == 0 {
+		return
+	}
+	_, _ = fmt.Fprintf(w, "\n%s%d file(s) deleted locally are still in storage:%s\n", colorYellow, len(pending), colorReset)
+	const shown = 10
+	for i, p := range pending {
+		if i == shown {
+			_, _ = fmt.Fprintf(w, "  %s… and %d more%s\n", colorDim, len(pending)-shown, colorReset)
+			break
+		}
+		_, _ = fmt.Fprintf(w, "  %s•%s %s\n", colorDim, colorReset, util.TruncatePath(p, 60))
+	}
+	_, _ = fmt.Fprintf(w, "  Run %scodex-sync push --force%s to delete them remotely too.\n", colorBold, colorReset)
 }
 
 func pullCmd() *cobra.Command {
