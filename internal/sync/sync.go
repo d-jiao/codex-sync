@@ -584,16 +584,6 @@ func (s *Syncer) fetchRemote(ctx context.Context, relativePath, remoteKey string
 	return data, nil
 }
 
-// localFilePath resolves a relative path under the base dir, refusing anything
-// that would escape it (crafted remote keys).
-func (s *Syncer) localFilePath(relativePath string) (string, error) {
-	fullPath := filepath.Join(s.claudeDir, relativePath)
-	if !strings.HasPrefix(filepath.Clean(fullPath), filepath.Clean(s.claudeDir)+string(filepath.Separator)) {
-		return "", fmt.Errorf("refusing to write outside %s: %s", s.claudeDir, relativePath)
-	}
-	return fullPath, nil
-}
-
 // downloadFile downloads and decrypts a file from remote storage.
 // If originalMtime is non-nil, the file's modification time will be restored to that value.
 func (s *Syncer) downloadFile(ctx context.Context, relativePath string, remote storage.ObjectInfo, originalMtime *time.Time) error {
@@ -604,19 +594,15 @@ func (s *Syncer) downloadFile(ctx context.Context, relativePath string, remote s
 	if err != nil {
 		return err
 	}
-	fullPath, err := s.localFilePath(relativePath)
+	fullPath, err := safeLocalPath(s.claudeDir, relativePath)
 	if err != nil {
 		return err
 	}
 
-	// Ensure directory exists
-	dir := filepath.Dir(fullPath)
-	if err := os.MkdirAll(dir, 0700); err != nil {
-		return fmt.Errorf("failed to create directory: %w", err)
-	}
-
-	// Transcripts can contain secrets echoed by tools: keep them user-only
-	if err := os.WriteFile(fullPath, data, 0600); err != nil {
+	// Transcripts can contain secrets echoed by tools: keep them user-only.
+	// The write is atomic so an interrupted pull leaves the previous content
+	// intact rather than a truncated file.
+	if err := writeLocalFileAtomic(s.claudeDir, relativePath, data, 0600); err != nil {
 		return fmt.Errorf("failed to write file: %w", err)
 	}
 
@@ -646,7 +632,10 @@ func (s *Syncer) handleConflict(ctx context.Context, relativePath string, remote
 
 	// downloadFile de-tokenizes content (IsPortableContentPath honors the
 	// .conflict. suffix) but also records the sidecar in state; undo that.
-	conflictPath := relativePath + ".conflict." + time.Now().Format("20060102-150405")
+	conflictPath, err := uniqueConflictPath(s.claudeDir, relativePath, time.Now())
+	if err != nil {
+		return err
+	}
 	defer s.state.RemoveFile(conflictPath)
 	if err := s.downloadFile(ctx, conflictPath, remoteObj, nil); err != nil {
 		return fmt.Errorf("failed to save conflict file: %w", err)
@@ -752,7 +741,7 @@ func (s *Syncer) mergeRemote(ctx context.Context, relativePath string, remoteObj
 	if err != nil {
 		return false, err
 	}
-	fullPath, err := s.localFilePath(relativePath)
+	fullPath, err := safeLocalPath(s.claudeDir, relativePath)
 	if err != nil {
 		return false, err
 	}
@@ -766,7 +755,7 @@ func (s *Syncer) mergeRemote(ctx context.Context, relativePath string, remoteObj
 	if err != nil {
 		return false, err
 	}
-	if err := writeFileAtomic(fullPath, merged, 0600); err != nil {
+	if err := writeLocalFileAtomic(s.claudeDir, relativePath, merged, 0600); err != nil {
 		return false, fmt.Errorf("failed to write merged file: %w", err)
 	}
 	info, err := os.Stat(fullPath)
