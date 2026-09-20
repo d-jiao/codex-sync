@@ -29,7 +29,7 @@ func TestCreateBackupSetsRestrictivePermissions(t *testing.T) {
 		t.Fatalf("Failed to create helper.json: %v", err)
 	}
 
-	backupDir, err := createBackup(config.SyncPaths)
+	backupDir, err := createBackup(config.SyncPaths, nil)
 	if err != nil {
 		t.Fatalf("createBackup failed: %v", err)
 	}
@@ -61,5 +61,48 @@ func TestCreateBackupSetsRestrictivePermissions(t *testing.T) {
 	}
 	if got := fi.Mode().Perm(); got != 0600 {
 		t.Errorf("Expected backup file mode 0600, got %o", got)
+	}
+}
+
+// TestCreateBackupHonorsExcludes covers the first-pull backup of a Codex home
+// whose sync_paths include the base directory itself. Identity files and
+// databases must not be copied: they are never synced, they are large and
+// machine-local, and auth.json is a credential.
+func TestCreateBackupHonorsExcludes(t *testing.T) {
+	tmpHome := t.TempDir()
+	t.Setenv("HOME", tmpHome)
+	t.Setenv("CODEX_HOME", "")
+
+	baseDir := config.BaseDir()
+	if err := os.MkdirAll(filepath.Join(baseDir, "skills"), 0700); err != nil {
+		t.Fatalf("Failed to create skills dir: %v", err)
+	}
+	for name, content := range map[string]string{
+		"auth.json":          `{"token":"secret"}`,
+		"state.sqlite":       "binary",
+		"scratch.tmp":        "junk",
+		"skills/helper.json": `{"name":"helper"}`,
+		"AGENTS.md":          "# agents",
+	} {
+		if err := os.WriteFile(filepath.Join(baseDir, name), []byte(content), 0600); err != nil {
+			t.Fatalf("Failed to write %s: %v", name, err)
+		}
+	}
+
+	cfg := &config.Config{Exclude: []string{"*.tmp"}}
+	backupDir, err := createBackup([]string{"."}, cfg.IsExcluded)
+	if err != nil {
+		t.Fatalf("createBackup failed: %v", err)
+	}
+
+	for _, rel := range []string{"skills/helper.json", "AGENTS.md"} {
+		if _, err := os.Stat(filepath.Join(backupDir, rel)); err != nil {
+			t.Errorf("expected %s in the backup: %v", rel, err)
+		}
+	}
+	for _, rel := range []string{"auth.json", "state.sqlite", "scratch.tmp"} {
+		if _, err := os.Stat(filepath.Join(backupDir, rel)); !os.IsNotExist(err) {
+			t.Errorf("%s must not be backed up (err = %v)", rel, err)
+		}
 	}
 }

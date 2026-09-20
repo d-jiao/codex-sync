@@ -1210,7 +1210,7 @@ Examples:
 				}
 
 				if hasExisting && !force {
-					err := handleFirstPullWithExistingFiles(ctx, cmd, syncer, dryRun)
+					err := handleFirstPullWithExistingFiles(ctx, cmd, cfg, syncer, dryRun)
 					if err == nil && dryRun {
 						desktopHint()
 					}
@@ -2296,7 +2296,7 @@ func hasExistingBaseFiles(cfg *config.Config) (bool, error) {
 		return false, nil
 	}
 
-	files, err := sync.GetLocalFiles(baseDir, cfg.GetEffectiveSyncPaths())
+	files, err := sync.GetLocalFiles(baseDir, cfg.GetEffectiveSyncPaths(), cfg.IsExcluded)
 	if err != nil {
 		return false, err
 	}
@@ -2306,7 +2306,7 @@ func hasExistingBaseFiles(cfg *config.Config) (bool, error) {
 
 // handleFirstPullWithExistingFiles handles the case where the user is pulling
 // for the first time but already has local files that could be overwritten
-func handleFirstPullWithExistingFiles(ctx context.Context, cmd *cobra.Command, syncer *sync.Syncer, dryRun bool) error {
+func handleFirstPullWithExistingFiles(ctx context.Context, cmd *cobra.Command, cfg *config.Config, syncer *sync.Syncer, dryRun bool) error {
 	// Get preview of what would happen
 	preview, err := syncer.PreviewPull(ctx)
 	if err != nil {
@@ -2387,7 +2387,7 @@ func handleFirstPullWithExistingFiles(ctx context.Context, cmd *cobra.Command, s
 	switch choice {
 	case 0:
 		// Backup and proceed
-		backupDir, err := createBackup(syncer.SyncPaths())
+		backupDir, err := createBackup(syncer.SyncPaths(), cfg.IsExcluded)
 		if err != nil {
 			return fmt.Errorf("failed to create backup: %w", err)
 		}
@@ -2407,8 +2407,11 @@ func handleFirstPullWithExistingFiles(ctx context.Context, cmd *cobra.Command, s
 	}
 }
 
-// createBackup creates a backup of the current ~/.codex directory
-func createBackup(syncPaths []string) (string, error) {
+// createBackup copies the syncable files of the current ~/.codex directory
+// into a timestamped sibling directory. excludeFn is the configured exclusion
+// test; it keeps identity files, databases and other hard-excluded paths out
+// of the backup when sync_paths names a parent directory. It may be nil.
+func createBackup(syncPaths []string, excludeFn func(string) bool) (string, error) {
 	baseDir := config.BaseDir()
 	timestamp := time.Now().Format("20060102-150405")
 	backupDir := baseDir + ".backup." + timestamp
@@ -2419,7 +2422,7 @@ func createBackup(syncPaths []string) (string, error) {
 	}
 
 	// Copy all syncable files to backup
-	files, err := sync.GetLocalFiles(baseDir, syncPaths)
+	files, err := sync.GetLocalFiles(baseDir, syncPaths, excludeFn)
 	if err != nil {
 		return "", fmt.Errorf("failed to list files: %w", err)
 	}

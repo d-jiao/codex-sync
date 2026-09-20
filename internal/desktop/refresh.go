@@ -2,7 +2,6 @@ package desktop
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -19,7 +18,7 @@ type Options struct {
 	NoBackup   bool
 	NoNames    bool
 	// Processes lists Codex/ChatGPT processes that would hold the databases.
-	// nil uses pgrep; tests inject their own.
+	// nil lists them with ps; tests inject their own.
 	Processes func() ([]string, error)
 }
 
@@ -123,42 +122,55 @@ func threadRows(baseDir string) (int, error) {
 	return n, nil
 }
 
-// processPattern matches the processes that hold the databases open: the
-// desktop app and any codex engine or CLI, matched on argv[0] so that a shell
-// merely mentioning the engine path does not count. Paths containing spaces are
-// not matched; the app engine and PATH installs have none.
-const processPattern = `^([^ ]*/)?(codex|ChatGPT)( |$)`
+// codexExecutables are the programs that hold the databases open: the desktop
+// app and any codex engine or CLI. Matching is exact and case-sensitive, so
+// codex-sync itself and the app's "Codex (Renderer)" helpers are left alone.
+var codexExecutables = map[string]bool{"codex": true, "ChatGPT": true}
 
-// runningCodexProcesses lists matching processes via pgrep. -a includes our own
-// ancestors, which pgrep skips by default — without it a Codex session running
-// codex-sync would hide the very engine that holds the databases. (On procps
-// -a merely means "list the full command line", which -fl already does.) No
-// match is not an error.
-func runningCodexProcesses() ([]string, error) {
-	out, err := exec.Command("pgrep", "-afl", processPattern).Output()
-	var exitErr *exec.ExitError
-	if errors.As(err, &exitErr) && exitErr.ExitCode() == 1 {
-		return nil, nil // no match
+// isCodexExecutable reports whether an executable path belongs to a program
+// that holds the databases.
+func isCodexExecutable(command string) bool {
+	if command == "" {
+		return false
 	}
+	return codexExecutables[filepath.Base(command)]
+}
+
+// runningCodexProcesses lists the processes that hold the databases open.
+//
+// ps reports the executable path without arguments, which matters twice: a
+// bundle path containing spaces (/Applications/Chat GPT.app/…) is still matched
+// correctly, and a shell or editor that merely mentions the engine path in its
+// arguments is not matched at all. -ww keeps ps from truncating long paths.
+// Our own ancestors are included on purpose — a Codex session running
+// codex-sync must not hide the very engine holding the databases — so only our
+// own PID is dropped. No match is not an error.
+func runningCodexProcesses() ([]string, error) {
+	out, err := exec.Command("ps", "-axww", "-o", "pid=,comm=").Output()
 	if err != nil {
-		return nil, fmt.Errorf("pgrep: %w", err)
+		return nil, fmt.Errorf("ps: %w", err)
 	}
 	return parseProcessLines(string(out), os.Getpid()), nil
 }
 
-// parseProcessLines keeps the non-empty "PID command" lines that are not our
-// own process.
+// parseProcessLines turns `ps -o pid=,comm=` output into "PID executable"
+// lines, keeping only Codex processes other than our own. The executable path
+// may contain spaces, so only the first field is split off.
 func parseProcessLines(out string, self int) []string {
 	var procs []string
 	for _, l := range strings.Split(out, "\n") {
-		l = strings.TrimSpace(l)
-		if l == "" {
+		pidField, command, found := strings.Cut(strings.TrimSpace(l), " ")
+		if !found {
 			continue
 		}
-		if pid, _, _ := strings.Cut(l, " "); pid == strconv.Itoa(self) {
+		command = strings.TrimSpace(command)
+		if pid, err := strconv.Atoi(pidField); err != nil || pid == self {
 			continue
 		}
-		procs = append(procs, l)
+		if !isCodexExecutable(command) {
+			continue
+		}
+		procs = append(procs, pidField+" "+command)
 	}
 	return procs
 }
